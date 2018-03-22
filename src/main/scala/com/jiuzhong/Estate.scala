@@ -24,14 +24,14 @@ object Estate {
     val urlPath = s"hdfs://ns1/user/u_tel_hlwb_mqj/private/estate/config/url.txt"
     val savePath = s"hdfs://ns1/user/u_tel_hlwb_mqj/private/estate/${dt}/scrapeSource"
 
-    val urls: List[Array[String]] = sc.textFile(urlPath).map(l => enc.decrypt(l).split(" +")).collect().toList
+    val urls = sc.broadcast(sc.textFile(urlPath).map(l => enc.decrypt(l).split(" +")).collect().toList)
 
     val saveTbl = source.filter{
       record =>
         val arr = record.split("\t")
         val sourceurl = arr(3)
         val refurl = arr(4)
-        urls.exists(url => url.forall(part => sourceurl.contains(part) || refurl.contains(part)))
+        urls.value.exists(url => url.forall(part => sourceurl.contains(part) || refurl.contains(part)))
     }.toDF()
 
     saveTbl.coalesce(1000).write.format("com.databricks.spark.csv").
