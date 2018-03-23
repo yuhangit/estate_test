@@ -2,7 +2,8 @@ package com.jiuzhong
 
 
 import java.text.SimpleDateFormat
-
+import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.FileSystem
 import org.apache.spark.sql.SparkSession
 
 case class SadaRecord(scrip:String, ad:String, ts:String, url:String, ref:String, ua:String, dstip:String,cookie:String,
@@ -12,6 +13,8 @@ object Estate {
   import spark.implicits._
 
   val sc = spark.sparkContext
+
+  val fs = FileSystem.get(sc.hadoopConfiguration)
   val today = new SimpleDateFormat("yyMMdd").format(new java.util.Date())
 
   def scrapeSource(prjName:String, dt:String, enc: Enc): Unit ={
@@ -30,6 +33,10 @@ object Estate {
     val urls = sc.broadcast(urls_encrypt.collect().toList)
 
     val urls_decrypt =s"${saveBase}/${prjName}/config/${prjName}_url.txt"
+
+    if (fs.exists(new Path(urls_decrypt))){
+      fs.delete(new Path(urls_decrypt))
+    }
     urls_encrypt.map(l => l.mkString(" ")).saveAsTextFile(urls_decrypt)
 
 
