@@ -30,7 +30,7 @@ object Estate {
     val savePath = s"${saveBase}/${prjName}/${dt}/scrapeSource"
     val urls_encrypt = sc.textFile(urlPath).map(l => enc.decrypt(l).split(" +"))
 
-    val urls = sc.broadcast(urls_encrypt.collect().toList)
+    val urls = sc.broadcast(urls_encrypt.filter(_ == "").collect().toList)
 
     val urls_decrypt =s"${saveBase}/${prjName}/config/${prjName}_url.txt"
 
