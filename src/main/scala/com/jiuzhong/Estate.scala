@@ -12,7 +12,7 @@ object Estate {
   val sc = spark.sparkContext
   val today = new SimpleDateFormat("yyMMdd").format(new java.util.Date())
 
-  def scrapeSource(dt:String, enc: Enc): Unit ={
+  def scrapeSource(prjName:String, dt:String, enc: Enc): Unit ={
     val publicPath = "hdfs://ns1/user/gdpi/public"
     val addcookiePath = s"${publicPath}/sada_gdpi_adcookie/${dt}/*/*.gz"
     val newclickPath = s"${publicPath}/sada_new_click/${dt}/*/*.gz"
@@ -20,11 +20,15 @@ object Estate {
 
     val source = sc.textFile("%s,%s".format(addcookiePath,newclickPath))
 //    val source = sc.textFile("%s,%s".format(addcookiePath,newclickPath,postPath))
-
-    val urlPath = s"hdfs://ns1/user/u_tel_hlwb_mqj/private/estate/config/url.txt"
-    val savePath = s"hdfs://ns1/user/u_tel_hlwb_mqj/private/estate/${dt}/scrapeSource"
+    val saveBase = "hdfs://ns1/user/u_tel_hlwb_mqj/private/test"
+    val urlPath = s"${saveBase}/config/${prjName}_url.txt"
+    val savePath = s"${saveBase}/${prjName}/${dt}/scrapeSource"
 
     val urls = sc.broadcast(sc.textFile(urlPath).map(l => enc.decrypt(l).split(" +")).collect().toList)
+    val urls_decrypt =s"${saveBase}/${prjName}/config/${prjName}_url.txt"
+    urls.value.toDF.coalesce(1).write.format("com.databricks.spark.csv").
+      option("delimiter","\t").save(urls_decrypt)
+
 
     val saveTbl = source.filter{
       record =>
@@ -39,9 +43,10 @@ object Estate {
   }
 
   def main(args: Array[String]): Unit = {
-    val dateStr = args(0)
+    val prjName = args(0)
+    val dateStr = args(1)
     // don't initial class in class body
     val enc = new Enc()
-    scrapeSource(dateStr,enc)
+    scrapeSource(prjName,dateStr,enc)
   }
 }
