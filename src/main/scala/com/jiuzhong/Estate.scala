@@ -5,6 +5,8 @@ import java.text.SimpleDateFormat
 
 import org.apache.spark.sql.SparkSession
 
+case class SadaRecord(scrip:String, ad:String, ts:String, url:String, ref:String, ua:String, dstip:String,cookie:String,
+                      srcPort:String)
 object Estate {
   val  spark = SparkSession.builder().appName("Estate").getOrCreate()
   import spark.implicits._
@@ -23,11 +25,12 @@ object Estate {
     val saveBase = "hdfs://ns1/user/u_tel_hlwb_mqj/private/test"
     val urlPath = s"${saveBase}/config/${prjName}_url.txt"
     val savePath = s"${saveBase}/${prjName}/${dt}/scrapeSource"
+    val urls_encrypt = sc.textFile(urlPath).map(l => enc.decrypt(l).split(" +"))
 
-    val urls = sc.broadcast(sc.textFile(urlPath).map(l => enc.decrypt(l).split(" +")).collect().toList)
+    val urls = sc.broadcast(urls_encrypt.collect().toList)
+
     val urls_decrypt =s"${saveBase}/${prjName}/config/${prjName}_url.txt"
-    urls.value.toDF.coalesce(1).write.format("com.databricks.spark.csv").
-      option("delimiter","\t").save(urls_decrypt)
+    urls_encrypt.map(l => l.mkString(" ")).saveAsTextFile(urls_decrypt)
 
 
     val saveTbl = source.filter{
