@@ -227,7 +227,7 @@ object Estate {
     val tagName = args(2)
     val arg3 = args.lift(3).getOrElse("10000")
     val runAll = if (arg3 == "all") true else false
-    val enc = new Enc("abcde12345!@#$%","jMhKlOuJnM34G6NHkqo9V010GhLAqOpF0BePojHgh1HgNg8^72k")
+    val enc = new Enc("a123bcd#$e45!@%","jnM34G6NHkqMhKlOuJo9VhLAqOpF0BePojHgh1010GHgNg8^72k")
 
     val publicPath = "hdfs://ns1/user/gdpi/public"
     val addcookiePath = s"${publicPath}/sada_gdpi_adcookie/${dateStr}/*/*.gz"
