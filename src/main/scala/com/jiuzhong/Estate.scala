@@ -77,10 +77,10 @@ object Estate {
         val ua = if ( arr(5).toLowerCase  == "nodef") "" else arr(5)
         val cookie = if (arr(7).toLowerCase == "nodef") "" else arr(7)
         val ad = arr(1)
-        val url = enc.encrypt(arr(3).replaceAll("\\s+",""))
+//        val url = enc.encrypt(arr(3).replaceAll("\\s+",""))
         val hostname = Try{new URL(arr(3)).getHost}.getOrElse("")
 //        val url = if (arr(3).toLowerCase() == "nodef") "" else  new URL(arr(3)).getHost
-        (arr(0),ad,arr(2),url,ref,ua,arr(6),cookie,arr(8))
+        (arr(0),ad,arr(2),hostname,ref,ua,arr(6),cookie,arr(8))
     }.toDF(sadaRecordArr:_*).as[SadaRecord]
 //      .withColumn("url", regexp_replace($"url","\t","")).
 //      withColumn("ref",regexp_replace(decode(unbase64($"ref"),"UTF-8"),"\t","")).
