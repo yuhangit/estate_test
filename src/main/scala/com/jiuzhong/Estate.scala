@@ -1,6 +1,7 @@
 package com.jiuzhong
 
 import java.io.File
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Base64
 
@@ -8,6 +9,9 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.expressions.Window
 import org.apache.spark.sql.functions._
+import org.apache.spark.SparkException
+
+import scala.util.Try
 
 
 case class SadaRecord(scrip:String, ad:String, ts:String, url:String, ref:String, ua:String, dstip:String,cookie:String,
@@ -74,6 +78,7 @@ object Estate {
         val cookie = if (arr(7).toLowerCase == "nodef") "" else arr(7)
         val ad = arr(1)
         val url = enc.encrypt(arr(3).replaceAll("\\s+",""))
+        val hostname = Try{new URL(arr(3)).getHost}.getOrElse("")
 //        val url = if (arr(3).toLowerCase() == "nodef") "" else  new URL(arr(3)).getHost
         (arr(0),ad,arr(2),url,ref,ua,arr(6),cookie,arr(8))
     }.toDF(sadaRecordArr:_*).as[SadaRecord]
@@ -218,7 +223,59 @@ object Estate {
 
   }
 
+  def getConfig(dateStr:String, prjName:String, method:String):Map[String,String]={
+    // 得到每个项目不同方式下的配置文件: source file, url file, tag file
 
+    val publicPath = "hdfs://ns1/user/gdpi/public"
+    val addcookiePath = s"${publicPath}/sada_gdpi_adcookie/${dateStr}/*/*.gz"
+    val newclickPath = s"${publicPath}/sada_new_click/${dateStr}/*/*.gz"
+    //    val postPath = ""
+    val postPath = s"${publicPath}/sada_gdpi_post_click/${dateStr}/*/*.gz"
+
+
+    val user = System.getProperty("user.name")
+    val privateBasePath = s"hdfs://ns1/user/${user}/private/test"
+
+    val configBasePath = s"${privateBasePath}/config"
+    val allCfgPath = s"${configBasePath}/all.cfg"
+    val cfgPath = s"${configBasePath}/${prjName}_${method}.cfg"
+    val cfg =
+    if (fs.exists(new Path(cfgPath))) {
+      val cfg = sc.textFile(cfgPath).map {
+        l =>
+          var arr = l.split(" +")
+          arr(0) -> arr(1)
+      }.collect().toMap[String,String]
+      cfg.updated("sourcePath", "%s,%s,%s".format(addcookiePath,newclickPath,postPath))
+    }else if(sc.textFile(allCfgPath).filter(_.contains()).count() == 1) {
+      val cfgPath = sc.textFile(allCfgPath).filter(_.contains()).take(1)(0)
+      val cfg = sc.textFile(cfgPath).map{
+        l =>
+          val arr = l.split(" +")
+          arr(0) -> arr(1)
+      }.collect().toMap
+      cfg.updated("sourcePath","%s,%s,%s".format(addcookiePath,newclickPath,postPath))
+    }else{
+//      val cfg = Map[String,String]()
+      throw new SparkException("config file for %s %s not found or define more than once in all.cfg".format(prjName,method))
+    }
+
+    cfg
+    // configure file path
+//    val urlPath = s"${privateBasePath}/config/${prjName}_url.txt"
+//    val tagPath = s"${privateBasePath}/config/${prjName}_appname.txt"
+//    // private path
+//    val privatePath = s"${privateBasePath}/${prjName}/${dateStr}"
+//    val scrapePath = s"${privatePath}/scrape"
+//    val processPath = s"${privatePath}/process"
+//    val matchPortalPath = s"${privatePath}/match_portal"
+//    val dropHistoryPath = s"${privatePath}/drop_history"
+//    val kvPath = s"${privatePath}/kv"
+//
+//    // history file path
+//    val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
+//    val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${prjName}_${dateStr}"
+  }
   // arg 0 : project name must supply.
   def main(args: Array[String]): Unit = {
     assert(args.length >= 1, "project name must supply")
@@ -227,31 +284,31 @@ object Estate {
     val tagName = args(2)
     val arg3 = args.lift(3).getOrElse("10000")
     val runAll = if (arg3 == "all") true else false
-    val enc = new Enc("abcde12345!@#$%","jMhKlOuJnM34G6NHkqo9V010GhLAqOpF0BePojHgh1HgNg8^72k")
+    val enc = new Enc("a123bcd#$e45!@%","jnM34G6NHkqMhKlOuJo9VhLAqOpF0BePojHgh1010GHgNg8^72k")
 
     val publicPath = "hdfs://ns1/user/gdpi/public"
     val addcookiePath = s"${publicPath}/sada_gdpi_adcookie/${dateStr}/*/*.gz"
     val newclickPath = s"${publicPath}/sada_new_click/${dateStr}/*/*.gz"
-//    val postPath = ""
+    //    val postPath = ""
     val postPath = s"${publicPath}/sada_gdpi_post_click/${dateStr}/*/*.gz"
+
 
     val user = System.getProperty("user.name")
     val privateBasePath = s"hdfs://ns1/user/${user}/private/test"
-    // configure file path
-    val urlPath = s"${privateBasePath}/config/${prjName}_url.txt"
-    val tagPath = s"${privateBasePath}/config/${prjName}_appname.txt"
-    // private path
-    val privatePath = s"${privateBasePath}/${prjName}/${dateStr}"
-    val scrapePath = s"${privatePath}/scrape"
-    val processPath = s"${privatePath}/process"
-    val matchPortalPath = s"${privatePath}/match_portal"
-    val dropHistoryPath = s"${privatePath}/drop_history"
-    val kvPath = s"${privatePath}/kv"
+//     configure file path
+        val urlPath = s"${privateBasePath}/config/${prjName}_url.txt"
+        val tagPath = s"${privateBasePath}/config/${prjName}_appname.txt"
+        // private path
+        val privatePath = s"${privateBasePath}/${prjName}/${dateStr}"
+        val scrapePath = s"${privatePath}/scrape"
+        val processPath = s"${privatePath}/process"
+        val matchPortalPath = s"${privatePath}/match_portal"
+        val dropHistoryPath = s"${privatePath}/drop_history"
+        val kvPath = s"${privatePath}/kv"
 
-    // history file path
-    val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
-    val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${prjName}_${dateStr}"
-
+        // history file path
+        val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
+        val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${prjName}_${dateStr}"
     // test file exists or not
     //assert(new File(urlPath).exists, s"url file ${urlPath} not exist, please check again")
     //assert(new File(tagPath).exists(),s"tag file ${tagPath} not exist, pease check again")
@@ -277,4 +334,5 @@ object Estate {
     dropHistory(prjName,tagName,tagPath,matchPortalPath,historyPath,dropHistoryPath)
     kvTag(tagName,dropHistoryPath,kvPath,saveHistoryPath)
   }
+
 }
