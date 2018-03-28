@@ -9,7 +9,6 @@ import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.expressions.Window
 import org.apache.spark.sql.functions._
-import org.apache.spark.SparkException
 
 import scala.util.Try
 
@@ -287,73 +286,57 @@ object Estate {
       baseCFG ++ cfg
     }else{
 //      val cfg = Map[String,String]()
-      throw new SparkException("config file for %s %s not found or define more than once in all.cfg".format(prjName,method))
+//      throw new SparkException("config file for %s %s not found or define more than once in all.cfg".format(prjName,method))
+        println("no config file find use default settings")
+      baseCFG
     }
     cfg
 
-//
 //    // history file path
 //    val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
 //    val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${prjName}_${dateStr}"
   }
+
+  def change_tag(filePath:String, newKey:String, newTag:String, newSubKey:String):Unit ={
+    val kv = sc.textFile(filePath).map {
+      line =>
+        val arr = line.split("\t",2)
+        arr(0) = if (newKey == "") arr(0) else newKey + "_" + arr(0).split("_").last
+        arr(1) =
+          if (newTag == "" && newSubKey == "") {
+            arr(1)
+          }
+          else {
+            val valueArr = arr(1).split("\t")
+            // total status line remain unchange
+            if (valueArr.size == 1) arr(1)
+            else {
+              val subValueArr = valueArr(1).split(":")
+              subValueArr(0) = if (newTag == "") subValueArr(0) else newTag
+              subValueArr(1) = if (newSubKey == "") subValueArr(1) else newSubKey
+              valueArr(1) = subValueArr.mkString(":")
+              valueArr.mkString("\t")
+            }
+          }
+       arr.mkString("\t")
+    }
+    deleteFile(filePath)
+    kv.saveAsTextFile(filePath)
+  }
+
   // arg 0 : project name must supply.
   def main(args: Array[String]): Unit = {
-    assert(args.length >= 1, "project name must supply")
-    val prjName = args(0)
-    val method = args(1)
-    val dateStr = if (args.length < 2) new SimpleDateFormat("yyyyMMdd").format(new java.util.Date()) else args(1)
-    val tagName = args(2)
-    val arg3 = args.lift(3).getOrElse("10000")
-    val runAll = if (arg3 == "all") true else false
+    assert(args.length >= 1, "stage name must supply")
+    val stage = args(0)
+    val prjName = args(1)
+    val method = args(2)
+    val dateStr = if (args.length < 2) new SimpleDateFormat("yyyyMMdd").format(new java.util.Date()) else args(3)
+
     val enc = new Enc("a123bcd#$e45!@%","jnM34G6NHkqMhKlOuJo9VhLAqOpF0BePojHgh1010GHgNg8^72k")
 
-    val publicPath = "hdfs://ns1/user/gdpi/public"
-    val addcookiePath = s"${publicPath}/sada_gdpi_adcookie/${dateStr}/*/*.gz"
-    val newclickPath = s"${publicPath}/sada_new_click/${dateStr}/*/*.gz"
-    //    val postPath = ""
-    val postPath = s"${publicPath}/sada_gdpi_post_click/${dateStr}/*/*.gz"
-
-
-    val user = System.getProperty("user.name")
-    val privateBasePath = s"hdfs://ns1/user/${user}/private/test"
-//     configure file path
-    val urlPath = s"${privateBasePath}/config/${prjName}_url.txt"
-    val tagPath = s"${privateBasePath}/config/${prjName}_appname.txt"
-    // private path
-    val privatePath = s"${privateBasePath}/${prjName}/${dateStr}"
-    val scrapePath = s"${privatePath}/scrape"
-    val processPath = s"${privatePath}/process"
-    val matchPortalPath = s"${privatePath}/match_portal"
-    val dropHistoryPath = s"${privatePath}/drop_history"
-    val kvPath = s"${privatePath}/kv"
-
-    // history file path
-    val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
-    val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${prjName}_${dateStr}"
-    // test file exists or not
-    //assert(new File(urlPath).exists, s"url file ${urlPath} not exist, please check again")
-    //assert(new File(tagPath).exists(),s"tag file ${tagPath} not exist, pease check again")
-    //createDir(savePath)
-    //    // delete file
-        deleteFile(processPath)
-        deleteFile(matchPortalPath)
-        deleteFile(dropHistoryPath)
-        deleteFile(kvPath)
-        deleteFile(saveHistoryPath)
-    // get relate url from source
-
-    val pieceAmount =  if (runAll){
-      scrapeScource(addcookiePath, newclickPath, postPath, urlPath, scrapePath,enc)
-      args.lift(4).getOrElse("10000").toInt
-    }else{
-      arg3.toInt
+    stage match {
+      case "change_tag" => change_tag(args(1),args.lift(2).getOrElse(""),args.lift(3).getOrElse(""),args.lift(4).getOrElse(""))
     }
-
-    processSource(scrapePath,processPath)
-    matchPortal(varsMap,processPath,matchPortalPath,0,pieceAmount)
-//    combinMatch(matchPortalPath)
-    dropHistory(prjName,tagName,tagPath,matchPortalPath,historyPath,dropHistoryPath)
-    kvTag(tagName,dropHistoryPath,kvPath,saveHistoryPath)
   }
 
 }
