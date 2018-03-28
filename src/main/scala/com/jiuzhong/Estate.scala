@@ -231,46 +231,66 @@ object Estate {
     val newclickPath = s"${publicPath}/sada_new_click/${dateStr}/*/*.gz"
     //    val postPath = ""
     val postPath = s"${publicPath}/sada_gdpi_post_click/${dateStr}/*/*.gz"
-
+    val sourcePath = "%s,%s,%s".format(addcookiePath, newclickPath, postPath)
 
     val user = System.getProperty("user.name")
     val privateBasePath = s"hdfs://ns1/user/${user}/private/test"
 
+    //default configuration
+    //url and tag file
+    val urlPath = s"${privateBasePath}/config/${prjName}_${method}_url.txt"
+    val tagPath = s"${privateBasePath}/config/${prjName}_${method}_tag.txt"
+    // private path
+    val privatePath = s"${privateBasePath}/${prjName}/${dateStr}/${method}"
+    val scrapePath = s"${privatePath}/scrape"
+    val processPath = s"${privatePath}/process"
+    val matchPortalPath = s"${privatePath}/match_portal"
+    val dropHistoryPath = s"${privatePath}/drop_history"
+    val kvPath = s"${privatePath}/kv"
+    // history path
+    val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
+    val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${method}_${dateStr}"
+
+    // default configuration return
+    val baseCFG = Map(
+      "sourcePath" -> sourcePath,
+      "urlPath" -> urlPath,
+      "sctagPath" -> tagPath,
+      "scrapePath" -> scrapePath,
+      "processPath" -> processPath,
+      "matchPortalPath" -> matchPortalPath,
+      "dropHistoryPath" -> dropHistoryPath,
+      "kvPath" -> kvPath,
+      "historyPath" -> historyPath,
+      "saveHistoryPath" -> saveHistoryPath
+    )
     val configBasePath = s"${privateBasePath}/config"
     val allCfgPath = s"${configBasePath}/all.cfg"
     val cfgPath = s"${configBasePath}/${prjName}_${method}.cfg"
     val cfg =
     if (fs.exists(new Path(cfgPath))) {
-      val cfg = sc.textFile(cfgPath).map {
+      val cfg = sc.textFile(cfgPath).filter(!_.startsWith("#")).map {
         l =>
           var arr = l.split(" +")
           arr(0) -> arr(1)
       }.collect().toMap[String,String]
-      cfg.updated("sourcePath", "%s,%s,%s".format(addcookiePath,newclickPath,postPath))
-    }else if(sc.textFile(allCfgPath).filter(_.contains()).count() == 1) {
-      val cfgPath = sc.textFile(allCfgPath).filter(_.contains()).take(1)(0)
-      val cfg = sc.textFile(cfgPath).map{
+      baseCFG ++ cfg
+    }else if(sc.textFile(allCfgPath).filter(_.contains(s"${prjName}_${method}")).count() == 1) {
+      val cfgPath = sc.textFile(allCfgPath).filter(!_.startsWith("#"))
+        .filter(   _.contains(s"${prjName}_${method}")).take(1)(0).split(" +")(1)
+
+      val cfg = sc.textFile(configBasePath+"/"+ cfgPath).map{
         l =>
           val arr = l.split(" +")
           arr(0) -> arr(1)
       }.collect().toMap
-      cfg.updated("sourcePath","%s,%s,%s".format(addcookiePath,newclickPath,postPath))
+      baseCFG ++ cfg
     }else{
 //      val cfg = Map[String,String]()
       throw new SparkException("config file for %s %s not found or define more than once in all.cfg".format(prjName,method))
     }
-
     cfg
-    // configure file path
-//    val urlPath = s"${privateBasePath}/config/${prjName}_url.txt"
-//    val tagPath = s"${privateBasePath}/config/${prjName}_appname.txt"
-//    // private path
-//    val privatePath = s"${privateBasePath}/${prjName}/${dateStr}"
-//    val scrapePath = s"${privatePath}/scrape"
-//    val processPath = s"${privatePath}/process"
-//    val matchPortalPath = s"${privatePath}/match_portal"
-//    val dropHistoryPath = s"${privatePath}/drop_history"
-//    val kvPath = s"${privatePath}/kv"
+
 //
 //    // history file path
 //    val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
@@ -280,6 +300,7 @@ object Estate {
   def main(args: Array[String]): Unit = {
     assert(args.length >= 1, "project name must supply")
     val prjName = args(0)
+    val method = args(1)
     val dateStr = if (args.length < 2) new SimpleDateFormat("yyyyMMdd").format(new java.util.Date()) else args(1)
     val tagName = args(2)
     val arg3 = args.lift(3).getOrElse("10000")
@@ -296,19 +317,19 @@ object Estate {
     val user = System.getProperty("user.name")
     val privateBasePath = s"hdfs://ns1/user/${user}/private/test"
 //     configure file path
-        val urlPath = s"${privateBasePath}/config/${prjName}_url.txt"
-        val tagPath = s"${privateBasePath}/config/${prjName}_appname.txt"
-        // private path
-        val privatePath = s"${privateBasePath}/${prjName}/${dateStr}"
-        val scrapePath = s"${privatePath}/scrape"
-        val processPath = s"${privatePath}/process"
-        val matchPortalPath = s"${privatePath}/match_portal"
-        val dropHistoryPath = s"${privatePath}/drop_history"
-        val kvPath = s"${privatePath}/kv"
+    val urlPath = s"${privateBasePath}/config/${prjName}_url.txt"
+    val tagPath = s"${privateBasePath}/config/${prjName}_appname.txt"
+    // private path
+    val privatePath = s"${privateBasePath}/${prjName}/${dateStr}"
+    val scrapePath = s"${privatePath}/scrape"
+    val processPath = s"${privatePath}/process"
+    val matchPortalPath = s"${privatePath}/match_portal"
+    val dropHistoryPath = s"${privatePath}/drop_history"
+    val kvPath = s"${privatePath}/kv"
 
-        // history file path
-        val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
-        val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${prjName}_${dateStr}"
+    // history file path
+    val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
+    val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${prjName}_${dateStr}"
     // test file exists or not
     //assert(new File(urlPath).exists, s"url file ${urlPath} not exist, please check again")
     //assert(new File(tagPath).exists(),s"tag file ${tagPath} not exist, pease check again")
