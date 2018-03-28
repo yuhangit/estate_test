@@ -61,7 +61,7 @@ object Estate {
     val decode64 = Base64.getDecoder
     val data = sc.textFile("%s,%s".format(adcookiePath,newclickPath))
     //    val data = sc.textFile("%s,%s,%s".format(adcookiePath,newclickPath,postPath))
-    val urls = sc.textFile(urlPath).map(l => enc.decrypt(l).split(" +")).filter(_ != "").collect().toList
+    val urls = sc.textFile(urlPath).filter(_.trim != "").map(l => enc.decrypt(l).split(" +")).collect().toList
 
     val encryptString = udf{(url:String)=>
       enc.encrypt(url)
