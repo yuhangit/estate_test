@@ -1,6 +1,5 @@
 package com.jiuzhong
 
-import java.io.File
 import java.net.URL
 import java.text.SimpleDateFormat
 
@@ -13,16 +12,17 @@ import org.apache.spark.sql.{Encoders, SparkSession}
 import scala.util.Try
 
 
-case class SadaRecord(scrip:String, ad:String, ts:String, url:String, ref:String, ua:String, dstip:String,cookie:String,
+case class SadaRecord(srcip:String, ad:String, ts:String, url:String, ref:String, ua:String, dstip:String,cookie:String,
                       srcPort:String)
 case class PVUrl(url:String)
+case class ADUAURL(ad:String,ua:String,url:String)
 
 object Estate {
 
   val conf = new SparkConf().setAppName("Oh!!")
   conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
   conf.set("spark.sql.crossJoin.enabled","true")
-  conf.registerKryoClasses(Array(classOf[Enc],classOf[SadaRecord],classOf[PVUrl]))
+  conf.registerKryoClasses(Array(classOf[Enc],classOf[SadaRecord],classOf[PVUrl],classOf[ADUAURL]))
   val spark = SparkSession.builder().appName("OH!!").config(conf).getOrCreate()
   val sc = spark.sparkContext
   val todayStr = new SimpleDateFormat("yyyyMMdd").format(new java.util.Date())
@@ -50,32 +50,40 @@ object Estate {
       fs.mkdirs(pathDir)
     }
   }
-  private def deleteFile(fileName:String, prefix:String = ""): Unit ={
-    val path = if (fileName.endsWith("match_portal")) fileName + "_0" else fileName
-    if(fs.exists(new Path(path))){
-      println(s"hadoop ${prefix} file path: ${fileName} already exsits, deleting...")
-      fs.delete(new Path(path), true)
-    }else if(new File(path).exists()){
-      println(s"local file ${prefix} file path: ${fileName} already exsits, deleting...")
-      new File(path).delete()
+  private def deleteFile(fileName:String): Unit ={
+    val path = fileName + "*"
+    fs.listFiles(new Path(path),false)
+    for (path <- fs.globStatus(new Path(path))){
+      println(s"hadoop  file path: ${path.getPath} already exsits, deleting...")
+      fs.delete(path.getPath,true)
     }
   }
   def scrapeSourcePV(configMap:Map[String,String],enc: Enc): Unit ={
-    val sadaRecordArr = Array("scrip", "ad", "ts", "url", "ref", "ua", "dstip","cookie", "srcPort")
+    val sadaRecordArr = Array("srcip", "ad", "ts", "url", "ref", "ua", "dstip","cookie", "srcPort")
     val urlSchema = Encoders.product[PVUrl].schema
     val dataSchema = Encoders.product[SadaRecord].schema
     val formatName = "com.databricks.spark.csv"
     val decryptStr = udf{url:String =>
       enc.decrypt(url)
     }
+    val encrypStr = udf{url:String=>
+      enc.encrypt(url)
+    }
+    val getHost = udf{
+      url:String =>
+        Try{new URL(url).getHost}.getOrElse("")
+    }
     val instrCol = udf{(str1:String,str2:String) =>
       str1.contains(str2)
     }
     val urls = spark.read.format(formatName).schema(urlSchema)
-      .option("delimiter"," ").option("parserLib","univocity").option("mode","DROPMALFORMED").load(configMap("urlPath"))
+      .option("delimiter"," ").option("parserLib","univocity").load(configMap("urlPath"))
       .withColumn("url",decryptStr($"url"))
 //    val datas  = configMap("sourcePath").split(",") map spark.read.format(formatName).option("parserLib","univocity").option("mode","DROPMALFORMED").schema(dataSchema).option("delimiter","\t").load
-    val data = sc.textFile(configMap("sourcePath")).filter(_.split("\t").length > 8).map{
+    val data = sc.textFile(configMap("sourcePath")).filter(line => {
+      val arr = line.split("\t")
+      arr.length>8 && arr(1) != "none" && arr(3).contains("sh.58.com/ershoufang")
+      }).map{
       line =>
         val arr  = line.split("\t")
         (arr(0),arr(1),arr(2),arr(3),arr(4),arr(5),arr(6),arr(7),arr(8))
@@ -83,6 +91,7 @@ object Estate {
 //    val data = datas.tail.foldLeft(datas.head){(df1,df2) => df1.unionAll(df2)}   .as[SadaRecord]
 
     val scrapeDS = data.as("t1").join(broadcast(urls).as("t2"),instrCol($"t1.url",$"t2.url"),"leftsemi")
+      .withColumn("url",getHost($"url"))
 
     scrapeDS.write.format(formatName).option("delimiter","\t")
       .save(configMap("scrapePath"))
@@ -90,7 +99,7 @@ object Estate {
 
   def scrapeScource(configMap:Map[String,String],enc:Enc): Unit = {
     //println(s"source files: ${adcookiePath} ${newclickPath} ${postPath}")
-    val sadaRecordArr = Array("scrip", "ad", "ts", "url", "ref", "ua", "dstip","cookie", "srcPort")
+    val sadaRecordArr = Array("srcip", "ad", "ts", "url", "ref", "ua", "dstip","cookie", "srcPort")
       //    val decode64 = Base64.getDecoder
     val encryptString = udf { (url: String) =>
         enc.encrypt(url)
@@ -115,7 +124,7 @@ object Estate {
             val ref = if (sada.ref.toLowerCase == "nodef") "" else enc.encrypt(sada.ref)
             val ua = if ( sada.ua.toLowerCase  == "nodef") "" else sada.ua
             val cookie = if (sada.cookie.toLowerCase == "nodef") "" else sada.cookie
-            (sada.scrip, sada.ad, sada.ts, hostname, ref, ua, sada.dstip, cookie, sada.srcPort)
+            (sada.srcip, sada.ad, sada.ts, hostname, ref, ua, sada.dstip, cookie, sada.srcPort)
           }
       } else{
         val urls = urlsRDD.collect()
@@ -148,14 +157,14 @@ object Estate {
 //        urls.exists(l => l.forall(record.url.contains(_)))
 //    }.toDF(sadaRecordArr:_*)
     //println("src data count"+ dataFilter.count)
-    saveTbl.write.format("com.databricks.spark.csv").
+    saveTbl.coalesce(1000).write.format("com.databricks.spark.csv").
       option("delimiter", varsMap("delm"))
       .save(configMap("scrapePath"))
   }
 
   // filter data based ts col -- unxi epoch timestamp
   //case class Record(srcip:String, ad:String, ts:Long, url:String, ref:String, desip:String, cookie:String, src_port: String, tslag:Long);
-  def processSource(configMap:Map[String,String]): Unit ={
+  def processAcc(configMap:Map[String,String],enc: Enc): Unit ={
     // validinterval -- valid time interval in seconds
     // lowlimit -- min stay time in seconds
     // uplimit -- max stay time in seconds
@@ -170,30 +179,37 @@ object Estate {
     processDF.coalesce(10).write.format("com.databricks.spark.csv").option("delimiter","\t").save(configMap("processPath"))
   }
 
-  def processPv(configMap: Map[String, String]): Unit ={
+  def processPv(configMap: Map[String, String], enc: Enc): Unit ={
     val interval = configMap.getOrElse("interval","300").toInt
     val lowLimit = configMap.getOrElse("lowLimit","300").toInt
     val upLimit = configMap.getOrElse("upLimit","100800").toInt
 
-    val columns = Array("srcip","ad","ts","url","ref","ua","desip","cookie","src_port")
-      val delm = varsMap("delm")
-      val srcData = sc.textFile(configMap("scrapePath")).map{
-        row =>
-          val arr = row.split(delm)
-          (arr(0), arr(1),arr(2).toLong,arr(3), arr(4), arr(5), arr(6), arr(7), arr(8))
-      }.toDF("srcip","ad","ts","url","ref","ua","desip","cookie","src_port")
+    val sadaRecordArr = Array("srcip", "ad", "ts", "url", "ref", "ua", "dstip","cookie", "srcPort")
+    val delm = varsMap("delm")
+    val srcData = sc.textFile(configMap("scrapePath")).map{
+      row =>
+        val arr = row.split(delm)
+        (arr(0), arr(1),arr(2).toLong,Try{new URL(arr(3)).getHost}.getOrElse(""), arr(4), arr(5), arr(6), arr(7), arr(8))
+    }.toDF(sadaRecordArr:_*).as[SadaRecord]
 
-      val wSpec = Window.partitionBy("ad","ua").orderBy($"ts")
-      val dataSort = srcData.withColumn("tslag", lag("ts", 1, 0).over(wSpec)).filter($"tslag" =!= 0)
+    val wSpec = Window.partitionBy("ad","ua").orderBy($"ts")
+    val dataSort = srcData.withColumn("tslag", lag("ts", 1, 0).over(wSpec)).filter($"tslag" =!= 0)
 
-      val dataValid = dataSort.withColumn("interval", ($"ts" - $"tslag")/1000).filter($"interval" < interval).
-        groupBy("ad","ua","url").agg(sum($"interval") as "totaltime", max("srcip") as "srcip", max("ref") as "ref",
-        max("desip") as "desip", max("cookie") as "cookie", max("src_port") as "src_port")
+    val dataValid = dataSort.withColumn("interval", ($"ts" - $"tslag")/1000).filter($"interval" < interval).
+      groupBy("ad","ua","url").agg(sum($"interval") as "totaltime", max("srcip") as "srcip", max("ref") as "ref",
+      max("dstip") as "dstip", max("cookie") as "cookie", max("srcPort") as "srcPort")
 
-      val dataFilter = dataValid.filter($"totaltime" >= lowLimit && $"totaltime" <= upLimit).select("srcip",
-        "ad","totaltime","url","ref","ua","desip","cookie","src_port")
-      val dataFilterMatch = dataFilter.select("ad","ua","url")//.filter("ad != '' and ad != 'none'")
-      dataFilterMatch.write.format("com.databricks.spark.csv").option("delimiter",delm).save(configMap("processPath"))
+    val dataFilter = dataValid.filter($"totaltime" >= lowLimit && $"totaltime" <= upLimit).select(
+      "srcip", "ad", "totaltime", "url", "ref", "ua", "dstip","cookie", "srcPort")
+    val dataFilterMatch = dataFilter.select("ad","ua","url")//.filter("ad != '' and ad != 'none'")
+
+    //  add count
+
+    val countValid = srcData.groupBy("ad","ua").agg(count("url") as "cnts", max("url") as "url").filter($"cnts" between(1,100))
+      .drop("cnts")
+
+    dataFilterMatch.union(countValid).dropDuplicates("ad","ua").coalesce(10)
+        .write.format("com.databricks.spark.csv").option("delimiter",delm).save(configMap("processPath"))
 //    dataFilter.write.format("com.databricks.spark.csv").option("delimiter","\t").save(destpath)
 //    println("after filter, data count: " + dataFilter.count)
 
@@ -273,8 +289,10 @@ object Estate {
         val arr = row.split(delm,2)
         (arr(0),arr(1))
     }.toDF("key","value").
-      select(concat(lit(key + underScore + todayStr + underScore),row_number().over(Window.orderBy("value")))
-        , concat(lit(ad + delm),$"value" ,lit(delm), $"key")).toDF("key","value")
+      select(lit(key + underScore + todayStr + underScore), row_number().over(Window.orderBy("value") )
+        ,concat(lit(ad + delm),$"value" ,lit(delm), $"key")).toDF("k1","k2","value")
+      .withColumn("key",concat( $"k1",$"k2" - 1))
+      .select("key","value")
 
     val totalLine = (key + underScore + todayStr+ total, inDF.count.toString )
     val counts = Seq(totalLine).toDF("key","value")
@@ -286,7 +304,7 @@ object Estate {
 
   }
 
-  def getConfig(prjName:String, method:String,dateStr:String):Map[String,String]={
+  def getConfig(prjName:String, method:String,dateStr:String,mode:String = "none"):Map[String,String]={
     // 得到每个项目不同方式下的配置文件: source file, url file, tag file
     val user = System.getProperty("user.name")
 
@@ -355,14 +373,18 @@ object Estate {
     }
     cfg.foreach(pair => println(pair._1+" : "+pair._2))
 
-    val matchMode = cfg.getOrElse("matchMode","0")
+    val matchMode = if (mode != "none") mode else cfg.getOrElse("matchMode","1")
+
     val saveMatchPath = Map(
+      "matchMode" -> matchMode,
       "matchPortalPath" -> "%s_%s".format(matchPortalPath , matchMode),
       "dropHistoryPath" -> "%s_%s".format(dropHistoryPath,matchMode),
       "kvPath" -> "%s_%s".format(kvPath,matchMode),
       "saveHistoryPath" -> "%s_%s".format(saveHistoryPath,matchMode)
     )
+
     cfg ++ saveMatchPath
+
 //    // history file path
 //    val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
 //    val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${prjName}_${dateStr}"
@@ -399,7 +421,7 @@ object Estate {
   def run_all_acc(prjName:String, method:String, dateStr:String,tagName:String,enc: Enc): Unit ={
     val cfgs = getConfig(prjName,method,dateStr)
     scrapeScource(cfgs,enc)
-    processSource(cfgs)
+    processAcc(cfgs,enc)
 
     val path = matchPortal(cfgs)
     if (path != "")
@@ -413,7 +435,7 @@ object Estate {
   def run_all_pv(prjName: String, method: String, dateStr: String, tagName: String, enc: Enc): Unit ={
     val cfgs = getConfig(prjName, method, dateStr)
     scrapeScource(cfgs, enc)
-    processPv(cfgs)
+    processPv(cfgs,enc)
 
     val path = matchPortal(cfgs)
     if (path != "")
@@ -426,7 +448,41 @@ object Estate {
   def run_scape_from_pv(prjName: String, method: String, dateStr: String, tagName: String, enc: Enc): Unit ={
     val cfgs  = getConfig(prjName,method,dateStr)
     scrapeSourcePV(cfgs,enc)
-    processPv(cfgs)
+    processPv(cfgs,enc)
+
+    val path = matchPortal(cfgs)
+    if (path != "")
+      combineMatchPortal(path)
+
+    dropHistory(prjName,tagName,cfgs)
+    kvTag(tagName,cfgs)
+  }
+  def run_process_acc(prjName:String,method:String,dateStr:String, tagName:String,enc: Enc): Unit ={
+    val cfgs = getConfig(prjName,method,dateStr)
+    deleteFile(cfgs("processPath"))
+    deleteFile(cfgs("matchPortalPath"))
+    deleteFile(cfgs("dropHistoryPath"))
+    deleteFile(cfgs("kvPath"))
+    deleteFile(cfgs("saveHistoryPath"))
+
+    processAcc(cfgs,enc)
+
+    val path = matchPortal(cfgs)
+    if (path != "")
+      combineMatchPortal(path)
+
+    dropHistory(prjName,tagName,cfgs)
+    kvTag(tagName,cfgs)
+  }
+  def run_process_pv(prjName:String,method:String,dateStr:String, tagName:String,enc: Enc): Unit ={
+    val cfgs = getConfig(prjName,method,dateStr)
+    deleteFile(cfgs("processPath"))
+    deleteFile(cfgs("matchPortalPath"))
+    deleteFile(cfgs("dropHistoryPath"))
+    deleteFile(cfgs("kvPath"))
+    deleteFile(cfgs("saveHistoryPath"))
+
+    processPv(cfgs,enc)
 
     val path = matchPortal(cfgs)
     if (path != "")
@@ -452,7 +508,8 @@ object Estate {
       case("run_all",arg1,"acc",arg3) => run_all_acc(arg1,"acc",arg3,args.lift(4).getOrElse("") ,enc)
       case("run_all",arg1,"pv",arg3) => run_all_pv(arg1,"pv",arg3, args.lift(4).getOrElse(""), enc)
       case("run_scrape_from_pv",arg1,"pv",arg3) => run_scape_from_pv(arg1,"pv",arg3,args.lift(4).getOrElse(""),enc)
-      case _ => println("not match anything")
+      case("run_process",arg1,"pv",arg3) => run_process_pv(arg1,"pv",arg3,args.lift(4).getOrElse(""),enc)
+      case("run_process",arg1,"acc",arg3) =>run_process_acc(arg1,"acc",arg3,args.lift(4).getOrElse(""),enc)
     }
   }
 
