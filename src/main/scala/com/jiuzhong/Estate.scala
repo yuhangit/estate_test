@@ -52,7 +52,6 @@ object Estate {
   }
   private def deleteFile(fileName:String): Unit ={
     val path = fileName + "*"
-    fs.listFiles(new Path(path),false)
     for (path <- fs.globStatus(new Path(path))){
       println(s"hadoop  file path: ${path.getPath} already exsits, deleting...")
       fs.delete(path.getPath,true)
@@ -93,7 +92,7 @@ object Estate {
     val scrapeDS = data.as("t1").join(broadcast(urls).as("t2"),instrCol($"t1.url",$"t2.url"),"leftsemi")
       .withColumn("url",getHost($"url"))
 
-    scrapeDS.write.format(formatName).option("delimiter","\t")
+    scrapeDS.coalesce(1000).write.format(formatName).option("delimiter","\t")
       .save(configMap("scrapePath"))
   }
 
@@ -208,7 +207,7 @@ object Estate {
     val countValid = srcData.groupBy("ad","ua").agg(count("url") as "cnts", max("url") as "url").filter($"cnts" between(1,100))
       .drop("cnts")
 
-    dataFilterMatch.union(countValid).dropDuplicates("ad","ua").coalesce(10)
+    dataFilterMatch.union(countValid).coalesce(10)
         .write.format("com.databricks.spark.csv").option("delimiter",delm).save(configMap("processPath"))
 //    dataFilter.write.format("com.databricks.spark.csv").option("delimiter","\t").save(destpath)
 //    println("after filter, data count: " + dataFilter.count)
@@ -445,8 +444,8 @@ object Estate {
     kvTag(tagName,cfgs)
   }
 
-  def run_scape_from_pv(prjName: String, method: String, dateStr: String, tagName: String, enc: Enc): Unit ={
-    val cfgs  = getConfig(prjName,method,dateStr)
+  def run_scrape_from_pv(prjName: String, method: String, dateStr: String, tagName: String, enc: Enc): Unit ={
+    val cfgs = getConfig(prjName,method,dateStr)
     scrapeSourcePV(cfgs,enc)
     processPv(cfgs,enc)
 
@@ -507,7 +506,7 @@ object Estate {
       case ("change_tag",arg1,arg2,arg3) => change_tag(arg1,arg2,arg3,args.lift(4).getOrElse(""))
       case("run_all",arg1,"acc",arg3) => run_all_acc(arg1,"acc",arg3,args.lift(4).getOrElse("") ,enc)
       case("run_all",arg1,"pv",arg3) => run_all_pv(arg1,"pv",arg3, args.lift(4).getOrElse(""), enc)
-      case("run_scrape_from_pv",arg1,"pv",arg3) => run_scape_from_pv(arg1,"pv",arg3,args.lift(4).getOrElse(""),enc)
+      case("run_scrape_from_pv",arg1,"pv",arg3) => run_scrape_from_pv(arg1,"pv",arg3,args.lift(4).getOrElse(""),enc)
       case("run_process",arg1,"pv",arg3) => run_process_pv(arg1,"pv",arg3,args.lift(4).getOrElse(""),enc)
       case("run_process",arg1,"acc",arg3) =>run_process_acc(arg1,"acc",arg3,args.lift(4).getOrElse(""),enc)
     }
