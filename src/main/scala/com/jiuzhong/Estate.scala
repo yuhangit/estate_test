@@ -78,7 +78,7 @@ object Estate {
     }
     val urls = spark.read.format(formatName).schema(urlSchema)
       .option("delimiter"," ").option("parserLib","univocity").load(configMap("urlPath"))
-      .withColumn("url",decryptStr($"url"))
+      .withColumn("url",decryptStr($"url")).as[PVUrl]
 //    val datas  = configMap("sourcePath").split(",") map spark.read.format(formatName).option("parserLib","univocity").option("mode","DROPMALFORMED").schema(dataSchema).option("delimiter","\t").load
     val data = sc.textFile(configMap("sourcePath")).filter(line => {
       val arr = line.split("\t")
