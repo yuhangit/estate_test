@@ -11,4 +11,8 @@ libraryDependencies ++= Seq(
   "org.apache.spark" %% "spark-sql" % "2.2.0" % Provided
 )
 
+// https://mvnrepository.com/artifact/org.apache.commons/commons-io
+libraryDependencies += "org.apache.commons" % "commons-io" % "1.3.2"
+
+
 unmanagedBase := baseDirectory.value / "lib"

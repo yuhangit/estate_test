@@ -12,6 +12,7 @@ import org.apache.spark.sql.{Encoders, SparkSession}
 import scala.util.Try
 
 
+
 case class SadaRecord(srcip:String, ad:String, ts:String, url:String, ref:String, ua:String, dstip:String,cookie:String,
                       srcPort:String)
 case class PVUrl(url:String)
@@ -22,6 +23,7 @@ object Estate {
   val conf = new SparkConf().setAppName("Oh!!")
   conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
   conf.set("spark.sql.crossJoin.enabled","true")
+    conf.set("spark.speculation","true")
   conf.registerKryoClasses(Array(classOf[Enc],classOf[SadaRecord],classOf[PVUrl],classOf[ADUAURL]))
   val spark = SparkSession.builder().appName("OH!!").config(conf).getOrCreate()
   val sc = spark.sparkContext
@@ -68,20 +70,26 @@ object Estate {
     val encrypStr = udf{url:String=>
       enc.encrypt(url)
     }
-    val getHost = udf{
-      url:String =>
+    val getHost = udf{url:String =>
         Try{new URL(url).getHost}.getOrElse("")
     }
     val instrCol = udf{(str1:String,str2:String) =>
-      str1.contains(str2)
+      str2.split(" +").forall(str1.contains(_))
     }
+//  each line will not split to many parts becasue of encrypt and base64 encode
     val urls = spark.read.format(formatName).schema(urlSchema)
       .option("delimiter"," ").option("parserLib","univocity").load(configMap("urlPath"))
       .withColumn("url",decryptStr($"url")).as[PVUrl]
+
+    val hosts = urls.map{
+        line =>
+            val url = line.url.split(" +")(0)
+            new URL(url).getHost
+    }.filter(_ != "").distinct().collect()
 //    val datas  = configMap("sourcePath").split(",") map spark.read.format(formatName).option("parserLib","univocity").option("mode","DROPMALFORMED").schema(dataSchema).option("delimiter","\t").load
     val data = sc.textFile(configMap("sourcePath")).filter(line => {
       val arr = line.split("\t")
-      arr.length>8 && arr(1) != "none" && arr(3).contains("sh.58.com/ershoufang")
+      arr.length>8 && arr(1) != "none" && hosts.exists(arr(3).contains(_))
       }).map{
       line =>
         val arr  = line.split("\t")
@@ -89,7 +97,7 @@ object Estate {
     }.toDF(sadaRecordArr:_*).as[SadaRecord]
 //    val data = datas.tail.foldLeft(datas.head){(df1,df2) => df1.unionAll(df2)}   .as[SadaRecord]
 
-    val scrapeDS = data.as("t1").join(broadcast(urls).as("t2"),instrCol($"t1.url",$"t2.url"),"leftsemi")
+    val scrapeDS = data.as("t1").join(urls.as("t2"),instrCol($"t1.url",$"t2.url"),"leftsemi")
       .withColumn("url",getHost($"url"))
 
     scrapeDS.coalesce(1000).write.format(formatName).option("delimiter","\t")
@@ -188,7 +196,7 @@ object Estate {
     val srcData = sc.textFile(configMap("scrapePath")).map{
       row =>
         val arr = row.split(delm)
-        (arr(0), arr(1),arr(2).toLong,Try{new URL(arr(3)).getHost}.getOrElse(""), arr(4), arr(5), arr(6), arr(7), arr(8))
+        (arr(0), arr(1),arr(2).toLong,arr(3), arr(4), arr(5), arr(6), arr(7), arr(8))
     }.toDF(sadaRecordArr:_*).as[SadaRecord]
 
     val wSpec = Window.partitionBy("ad","ua").orderBy($"ts")
@@ -198,19 +206,17 @@ object Estate {
       groupBy("ad","ua","url").agg(sum($"interval") as "totaltime", max("srcip") as "srcip", max("ref") as "ref",
       max("dstip") as "dstip", max("cookie") as "cookie", max("srcPort") as "srcPort")
 
-    val dataFilter = dataValid.filter($"totaltime" >= lowLimit && $"totaltime" <= upLimit).select(
-      "srcip", "ad", "totaltime", "url", "ref", "ua", "dstip","cookie", "srcPort")
-    val dataFilterMatch = dataFilter.select("ad","ua","url")//.filter("ad != '' and ad != 'none'")
+    val dataFilter = dataValid.groupBy("ad","ua").agg(sum("totaltime") as "totaltime", max("url") as "url")
+      .filter($"totaltime" >= lowLimit && $"totaltime" <= upLimit)
+      .select("ad","ua","url")//.filter("ad != '' and ad != 'none'")
 
     //  add count
 
     val countValid = srcData.groupBy("ad","ua").agg(count("url") as "cnts", max("url") as "url").filter($"cnts" between(1,100))
-      .drop("cnts")
+      .select("ad","ua","url")
 
-    dataFilterMatch.union(countValid).coalesce(10)
-        .write.format("com.databricks.spark.csv").option("delimiter",delm).save(configMap("processPath"))
-//    dataFilter.write.format("com.databricks.spark.csv").option("delimiter","\t").save(destpath)
-//    println("after filter, data count: " + dataFilter.count)
+    countValid.union(countValid).coalesce(10)
+      .write.format("com.databricks.spark.csv").option("delimiter","\t").save(configMap("processPath"))
 
   }
 
