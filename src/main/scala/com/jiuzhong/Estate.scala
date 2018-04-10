@@ -52,7 +52,7 @@ object Estate {
             fs.mkdirs(pathDir)
         }
     }
-    private def deleteFile(fileName:String): Unit ={
+    private def deleteGolbalFile(fileName:String): Unit ={
         val path = fileName + "*"
         for (path <- fs.globStatus(new Path(path))){
             println(s"hadoop  file path: ${path.getPath} already exsits, deleting...")
@@ -92,7 +92,7 @@ object Estate {
         val data  = sc.textFile(configMap("sourcePath")).filter(line => {
             val arr = line.split("\t")
             // filter map.baidu.com or share.baidu.com
-            arr.length>8 && !new URL(arr(3)).getHost.contains(".baidu.com")  &&arr(1) != "none" && hosts.exists(arr(3).contains(_))
+            arr.length>8 && arr(1) != "none" && hosts.exists(l => l.split(" +").forall(arr(3).contains(_)))
         }).map{
             line =>
                 val arr  = line.split("\t")
@@ -110,67 +110,55 @@ object Estate {
             .save(configMap("scrapePath"))
     }
 
-    @deprecated
-    def scrapeScource(configMap:Map[String,String],enc:Enc): Unit = {
+    def scrapeScourceAcc(configMap:Map[String,String], enc:Enc): Unit = {
         //println(s"source files: ${adcookiePath} ${newclickPath} ${postPath}")
         val sadaRecordArr = Array("srcip", "ad", "ts", "url", "ref", "ua", "dstip","cookie", "srcPort")
       //    val decode64 = Base64.getDecoder
         val encryptString = udf { (url: String) =>
             enc.encrypt(url)
         }
-        val instrUDF = udf{(col1:String,col2:String) =>
-            col2.split(" ").forall(col1.contains(_))
+        /* test
+        val instrCol = udf{(url1:String,ref1:String,cookie1:String,url2:String,ref2:String,cookie2:String) =>
+            (if (url2 != null)
+                url2.split(" +").forall(url1.contains(_))
+            else false) && (if (ref2 != null)
+                ref2.split(" +").forall(ref1.contains(_))
+            else false) && (if (cookie2 != null)
+                cookie2.split(" +").map(_.trim).forall(cookie1.contains(_))
+            else false)
          }
+         */
+        val instrCol = udf{(url:String,ref:String,line:String) =>
+            line.split(" +").forall(ele => url.contains(ele) || ref.contains(ele))
+        }
         val data = sc.textFile(configMap("sourcePath"))
         //    val data = sc.textFile("%s,%s,%s".format(adcookiePath,newclickPath,postPath))
-        val urlsRDD = sc.textFile(configMap("urlPath")).map(l => enc.decrypt(l)).filter(_.trim != "")
-    val saveTbl =
-    if (urlsRDD.count() > 10000){
-        val urlsDF = urlsRDD.toDF("url")
-        data.map{
-          line =>
-            val arr:Array[String] = line.split("\t")
-            (arr(0),arr(1),arr(2),arr(3),arr(4),arr(5),arr(6),arr(7),arr(8))
-          }.toDF(sadaRecordArr:_*).as("t1").join(urlsDF.as("t2"),instrUDF($"t1.url",$"t2.url"),"leftsemi")
-          .as[SadaRecord].map{
-          sada =>
-            val hostname = Try{new URL(sada.url).getHost}.getOrElse("")
-            val ref = if (sada.ref.toLowerCase == "nodef") "" else enc.encrypt(sada.ref)
-            val ua = if ( sada.ua.toLowerCase  == "nodef") "" else sada.ua
-            val cookie = if (sada.cookie.toLowerCase == "nodef") "" else sada.cookie
-            (sada.srcip, sada.ad, sada.ts, hostname, ref, ua, sada.dstip, cookie, sada.srcPort)
-          }
-        } else{
-        val urls = urlsRDD.collect()
-        data.filter{
-          arr =>
-            val url = arr.split("\t")(3)
-            urls.exists(l => l.split(" +").forall(url.contains(_)))
-         }.map{
+        val urls = sc.textFile(configMap("urlPath")).map(l => enc.decrypt(l)).filter(_.trim != "").toDF("url")
+//        urlsRDD.saveAsTextFile(configMap("urlPath")+"asda")
+//        val urls = spark.read.format("json").load(configMap("urlPath") +"asda").cache()
+//        urls.count()
+//        deleteGolbalFile(configMap("urlPath") +"asda")
+
+        val srcData = data.map{
           line =>
             val arr:Array[String] = line.split("\t")
             val ref = if (arr(4).toLowerCase == "nodef") "" else enc.encrypt(arr(4))
             val ua = if ( arr(5).toLowerCase  == "nodef") "" else arr(5)
             val cookie = if (arr(7).toLowerCase == "nodef") "" else arr(7)
             val ad = arr(1)
-          //        val url = enc.encrypt(arr(3).replaceAll("\\s+",""))
-             val hostname = Try{new URL(arr(3)).getHost}.getOrElse("")
           //        val url = if (arr(3).toLowerCase() == "nodef") "" else  new URL(arr(3)).getHost
-            (arr(0),ad,arr(2),hostname,ref,ua,arr(6),cookie,arr(8))
-        }.toDF(sadaRecordArr:_*).as[SadaRecord]
-      //      .withColumn("url", regexp_replace($"url","\t","")).
-      //      withColumn("ref",regexp_replace(decode(unbase64($"ref"),"UTF-8"),"\t","")).
+            (arr(0),ad,arr(2),arr(3),ref,ua,arr(6),cookie,arr(8))
+        }.toDF(sadaRecordArr:_*)
+      //      .withColumn("url", regexp_replace($"url","\t",""))
+               .withColumn("ref",regexp_replace(decode(unbase64($"ref"),"UTF-8"),"\t",""))
         //withColumn("ua",decode(unbase64($"ua"),"UTF-8")).
-        //      withColumn("cookie",regexp_replace(decode(unbase64($"cookie"),"UTF-8"),"\\p{C}","?")).as[SadaRecord]
-      }
-
+                  .withColumn("cookie",regexp_replace(decode(unbase64($"cookie"),"UTF-8"),"\\p{C}","?"))
+            .as[SadaRecord]
 
     //
-         //    val saveTbl = sourceDS.filter{
-        //      record =>
-        //        urls.exists(l => l.forall(record.url.contains(_)))
-        //    }.toDF(sadaRecordArr:_*)
-        //println("src data count"+ dataFilter.count)
+//        val saveTbl = srcData.as("t1").join(urls.as("t2"),instrCol($"t1.url",$"t1.ref",$"t2.cookie", $"t2.url",$"t2.ref",$"t2.cookie"), "leftsemi")
+        val saveTbl = srcData.as("t1").join(urls.as("t2"),instrCol($"t1.url",$"t1.ref",$"t2.url"), "leftsemi")
+
         saveTbl.coalesce(1000).write.format("com.databricks.spark.csv").
           option("delimiter", varsMap("delm"))
         .save(configMap("scrapePath"))
@@ -203,7 +191,7 @@ object Estate {
         val srcData = sc.textFile(configMap("scrapePath")).map{
             row =>
                 val arr = row.split(delm)
-                (arr(0), arr(1),arr(2).toLong,arr(3), arr(4), arr(5), arr(6), arr(7), arr(8))
+                (arr(0), arr(1),arr(2).toLong,Try{new URL(arr(3)).getHost}.getOrElse(arr(3)), arr(4), arr(5), arr(6), arr(7), arr(8))
         }.toDF(sadaRecordArr:_*).as[SadaRecord]
 
         val wSpec = Window.partitionBy("ad","ua").orderBy($"ts")
@@ -401,71 +389,67 @@ object Estate {
 //    val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${prjName}_${dateStr}"
   }
 
-  def change_tag(filePath:String, newKey:String, newTag:String, newSubKey:String):Unit ={
+    def change_tag(filePath:String, newKey:String, newTag:String, newSubKey:String):Unit ={
 //    println("in change_tag ...")
 //    println(s"newkey: ${newKey}, newTag: ${newTag}, newSubKey: ${newSubKey}")
-    val kv = sc.textFile(filePath).map {
-      line =>
-        val arr = line.split("\t",2)
-        arr(0) = if (newKey == "") arr(0) else newKey + "_" + arr(0).split("_").last
-        arr(1) =
-          if (newTag == "" && newSubKey == "") {
-            arr(1)
-          }
-          else {
-            val valueArr = arr(1).split("\t")
-            // total status line remain unchange
-            if (valueArr.size == 1) arr(1)
-            else {
-              val subValueArr = valueArr(1).split(":")
-              subValueArr(0) = if (newTag == "") subValueArr(0) else newTag
-              subValueArr(1) = if (newSubKey == "") subValueArr(1) else newSubKey
-              valueArr(1) = subValueArr.mkString(":")
-              valueArr.mkString("\t")
-            }
-          }
-       arr.mkString("\t")
+        val kv = sc.textFile(filePath).map {
+            line =>
+                val arr = line.split("\t",2)
+                arr(0) = if (newKey == "") arr(0) else newKey + "_" + arr(0).split("_").last
+                arr(1) =
+                    if (newTag == "" && newSubKey == "") {
+                        arr(1)
+                    } else {
+                        val valueArr = arr(1).split("\t")
+                        // total status line remain unchange
+                        if (valueArr.size == 1) arr(1)
+                        else {
+                            val subValueArr = valueArr(1).split(":")
+                            subValueArr(0) = if (newTag == "") subValueArr(0) else newTag
+                            subValueArr(1) = if (newSubKey == "") subValueArr(1) else newSubKey
+                            valueArr(1) = subValueArr.mkString(":")
+                            valueArr.mkString("\t")
+                        }
+                    }
+                arr.mkString("\t")
+        }
+//      deleteGolbalFile(filePath)
+        kv.saveAsTextFile(filePath+s"_ChangeTag_${timeStr}")
     }
-//    deleteFile(filePath)
-    kv.saveAsTextFile(filePath+s"_ChangeTag_${timeStr}")
-  }
-  def run_all_acc(prjName:String, method:String, dateStr:String,tagName:String,enc: Enc): Unit ={
-    val cfgs = getConfig(prjName,method,dateStr)
-    scrapeScource(cfgs,enc)
-    processAcc(cfgs,enc)
+    def run_scrape_from_acc(prjName:String, method:String, dateStr:String,tagName:String,enc: Enc): Unit ={
+        val cfgs = getConfig(prjName,method,dateStr)
+        scrapeScourceAcc(cfgs,enc)
+        if (method == "pv"){
+            processPv(cfgs,enc)
+        }else if(method == "acc"){
+            processAcc(cfgs,enc)
+        }else{
+            throw new Exception("method not allowed")
+        }
+        processAcc(cfgs,enc)
 
-    val path = matchPortal(cfgs)
-    if (path != "")
-      combineMatchPortal(path)
+        val path = matchPortal(cfgs)
+        if (path != "")
+            combineMatchPortal(path)
 
 
-    dropHistory(prjName,tagName,cfgs)
-    kvTag(tagName,cfgs)
-  }
+        dropHistory(prjName,tagName,cfgs)
+        kvTag(tagName,cfgs)
+    }
 
-  def run_all_pv(prjName: String, method: String, dateStr: String, tagName: String, enc: Enc): Unit ={
-    val cfgs = getConfig(prjName, method, dateStr)
-    scrapeScource(cfgs, enc)
-    processPv(cfgs,enc)
 
-    val path = matchPortal(cfgs)
-    if (path != "")
-      combineMatchPortal(path)
-
-    dropHistory(prjName,tagName,cfgs)
-    kvTag(tagName,cfgs)
-  }
-
-  def run_scrape_from_pv(prjName: String, method: String, dateStr: String, tagName: String, enc: Enc): Unit ={
-    val cfgs = getConfig(prjName,method,dateStr)
-    scrapeSourcePV(cfgs,enc)
-      if (method == "pv"){
-          processPv(cfgs,enc)
-      }else if(method == "acc"){
-          processAcc(cfgs,enc)
-      }else{
+    def run_scrape_from_pv(prjName: String, method: String, dateStr: String, tagName: String, enc: Enc): Unit ={
+        val cfgs = getConfig(prjName,method,dateStr)
+        scrapeSourcePV(cfgs,enc)
+        if (method == "pv"){
+            processPv(cfgs,enc)
+        }else if(method == "acc") {
+            processAcc(cfgs, enc)
+        } else if(method == "domain"){
+            processPv(cfgs,enc)
+        }else{
           throw new Exception("method not allowed")
-      }
+         }
 
     val path = matchPortal(cfgs)
     if (path != "")
@@ -476,11 +460,11 @@ object Estate {
   }
   def run_process_acc(prjName:String,method:String,dateStr:String, tagName:String,enc: Enc): Unit ={
     val cfgs = getConfig(prjName,method,dateStr)
-    deleteFile(cfgs("processPath"))
-    deleteFile(cfgs("matchPortalPath"))
-    deleteFile(cfgs("dropHistoryPath"))
-    deleteFile(cfgs("kvPath"))
-    deleteFile(cfgs("saveHistoryPath"))
+    deleteGolbalFile(cfgs("processPath"))
+    deleteGolbalFile(cfgs("matchPortalPath"))
+    deleteGolbalFile(cfgs("dropHistoryPath"))
+    deleteGolbalFile(cfgs("kvPath"))
+    deleteGolbalFile(cfgs("saveHistoryPath"))
 
     processAcc(cfgs,enc)
 
@@ -493,11 +477,11 @@ object Estate {
   }
   def run_process_pv(prjName:String,method:String,dateStr:String, tagName:String,enc: Enc): Unit ={
     val cfgs = getConfig(prjName,method,dateStr)
-    deleteFile(cfgs("processPath"))
-    deleteFile(cfgs("matchPortalPath"))
-    deleteFile(cfgs("dropHistoryPath"))
-    deleteFile(cfgs("kvPath"))
-    deleteFile(cfgs("saveHistoryPath"))
+    deleteGolbalFile(cfgs("processPath"))
+    deleteGolbalFile(cfgs("matchPortalPath"))
+    deleteGolbalFile(cfgs("dropHistoryPath"))
+    deleteGolbalFile(cfgs("kvPath"))
+    deleteGolbalFile(cfgs("saveHistoryPath"))
 
     processPv(cfgs,enc)
 
@@ -522,8 +506,7 @@ object Estate {
     (cmd,prjName,method,dateStr) match {
       case ("test_conf",prj,mth,ds) => getConfig(prj,mth,ds)
       case ("change_tag",arg1,arg2,arg3) => change_tag(arg1,arg2,arg3,args.lift(4).getOrElse(""))
-      case("run_all",arg1,"acc",arg3) => run_all_acc(arg1,"acc",arg3,args.lift(4).getOrElse("") ,enc)
-      case("run_all",arg1,"pv",arg3) => run_all_pv(arg1,"pv",arg3, args.lift(4).getOrElse(""), enc)
+      case("run_scrape_from_acc",arg1,arg2,arg3) => run_scrape_from_acc(arg1,arg2,arg3, args.lift(4).getOrElse(""), enc)
       case("run_scrape_from_pv",arg1,arg2,arg3) => run_scrape_from_pv(arg1,arg2,arg3,args.lift(4).getOrElse(""),enc)
       case("run_process",arg1,"pv",arg3) => run_process_pv(arg1,"pv",arg3,args.lift(4).getOrElse(""),enc)
       case("run_process",arg1,"acc",arg3) =>run_process_acc(arg1,"acc",arg3,args.lift(4).getOrElse(""),enc)
