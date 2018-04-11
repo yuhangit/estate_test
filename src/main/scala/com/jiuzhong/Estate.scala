@@ -97,7 +97,8 @@ object Estate {
         }).map{
             line =>
                 val arr  = line.split("\t")
-                (arr(0),arr(1),arr(2),arr(3),arr(4),arr(5),arr(6),arr(7),arr(8))
+                val ts = arr(2).dropRight(3)
+                (arr(0),arr(1),ts,arr(3),arr(4),arr(5),arr(6),arr(7),arr(8))
         }.toDF(sadaRecordArr:_*).
             withColumn("ts",from_unixtime($"ts"))
             .as[SadaRecord]
@@ -152,7 +153,8 @@ object Estate {
                 val ua = if ( arr(5).toLowerCase  == "nodef") "" else arr(5)
                 val cookie = if (arr(7).toLowerCase == "nodef") "" else arr(7)
                 val ad = arr(1)
-                (arr(0),ad,arr(2),arr(3),ref,ua,arr(6),cookie,arr(8))
+                val ts = arr(2).dropRight(3)
+                (arr(0),ad,ts,arr(3),ref,ua,arr(6),cookie,arr(8))
         }.toDF(sadaRecordArr:_*)
             //      .withColumn("url", regexp_replace($"url","\t",""))
             .withColumn("ref",regexp_replace(decode(unbase64($"ref"),"UTF-8"),"\t",""))
