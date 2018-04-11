@@ -3,6 +3,7 @@ package com.jiuzhong
 import java.net.URL
 import java.text.SimpleDateFormat
 
+import org.apache.commons.codec.binary.Base64
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.expressions.Window
@@ -97,7 +98,9 @@ object Estate {
             line =>
                 val arr  = line.split("\t")
                 (arr(0),arr(1),arr(2),arr(3),arr(4),arr(5),arr(6),arr(7),arr(8))
-        }.toDF(sadaRecordArr:_*).as[SadaRecord]
+        }.toDF(sadaRecordArr:_*).
+            withColumn("ts",from_unixtime($"ts"))
+            .as[SadaRecord]
 
         data.createTempView("t1")
         //    val data = datas.tail.foldLeft(datas.head){(df1,df2) => df1.unionAll(df2)}   .as[SadaRecord]
@@ -109,7 +112,7 @@ object Estate {
         scrapeDS.coalesce(10000).write.format(formatName).option("delimiter","\t")
             .save(configMap("scrapePath"))
     }
-
+    case class URLRecord(host:String,url:String,ref:String)
     def scrapeScourceAcc(configMap:Map[String,String], enc:Enc): Unit = {
         //println(s"source files: ${adcookiePath} ${newclickPath} ${postPath}")
         val sadaRecordArr = Array("srcip", "ad", "ts", "url", "ref", "ua", "dstip","cookie", "srcPort")
@@ -117,53 +120,84 @@ object Estate {
         val encryptString = udf { (url: String) =>
             enc.encrypt(url)
         }
-        /* test
-        val instrCol = udf{(url1:String,ref1:String,cookie1:String,url2:String,ref2:String,cookie2:String) =>
+
+        val instrCol = udf{(url1:String,ref1:String,url2:String,ref2:String) =>
             (if (url2 != null)
                 url2.split(" +").forall(url1.contains(_))
-            else false) && (if (ref2 != null)
+            else true) && (if (ref2 != null)
                 ref2.split(" +").forall(ref1.contains(_))
-            else false) && (if (cookie2 != null)
-                cookie2.split(" +").map(_.trim).forall(cookie1.contains(_))
-            else false)
+            else true)
          }
-         */
+         /*
         val instrCol = udf{(url:String,ref:String,line:String) =>
             line.split(" +").forall(ele => url.contains(ele) || ref.contains(ele))
         }
+        */
         val data = sc.textFile(configMap("sourcePath"))
         //    val data = sc.textFile("%s,%s,%s".format(adcookiePath,newclickPath,postPath))
-        val urls = sc.textFile(configMap("urlPath")).map(l => enc.decrypt(l)).filter(_.trim != "").toDF("url")
-//        urlsRDD.saveAsTextFile(configMap("urlPath")+"asda")
-//        val urls = spark.read.format("json").load(configMap("urlPath") +"asda").cache()
-//        urls.count()
-//        deleteGolbalFile(configMap("urlPath") +"asda")
-
-        val srcData = data.map{
-          line =>
-            val arr:Array[String] = line.split("\t")
-            val ref = if (arr(4).toLowerCase == "nodef") "" else enc.encrypt(arr(4))
-            val ua = if ( arr(5).toLowerCase  == "nodef") "" else arr(5)
-            val cookie = if (arr(7).toLowerCase == "nodef") "" else arr(7)
-            val ad = arr(1)
-          //        val url = if (arr(3).toLowerCase() == "nodef") "" else  new URL(arr(3)).getHost
-            (arr(0),ad,arr(2),arr(3),ref,ua,arr(6),cookie,arr(8))
+        val urlsRDD= sc.textFile(configMap("urlPath")).map(l => enc.decrypt(l)).filter(_.trim != "")
+        urlsRDD.saveAsTextFile(configMap("urlPath")+"asda")
+        val urls = spark.read.format("json").load(configMap("urlPath") +"asda").as[URLRecord].cache()
+        urls.count()
+        deleteGolbalFile(configMap("urlPath") +"asda")
+        val hosts = urls.map(_.host).distinct().collect()
+        val srcData = data.filter(line => {
+            val arr = line.split("\t")
+            // filter map.baidu.com or share.baidu.com
+            arr.length>8 && arr(1) != "none"
+        }).map{
+            line =>
+                val arr:Array[String] = line.split("\t")
+                val ref = if (arr(4).toLowerCase == "nodef") "" else arr(4)
+                val ua = if ( arr(5).toLowerCase  == "nodef") "" else arr(5)
+                val cookie = if (arr(7).toLowerCase == "nodef") "" else arr(7)
+                val ad = arr(1)
+                (arr(0),ad,arr(2),arr(3),ref,ua,arr(6),cookie,arr(8))
         }.toDF(sadaRecordArr:_*)
-      //      .withColumn("url", regexp_replace($"url","\t",""))
-               .withColumn("ref",regexp_replace(decode(unbase64($"ref"),"UTF-8"),"\t",""))
-        //withColumn("ua",decode(unbase64($"ua"),"UTF-8")).
-                  .withColumn("cookie",regexp_replace(decode(unbase64($"cookie"),"UTF-8"),"\\p{C}","?"))
+            //      .withColumn("url", regexp_replace($"url","\t",""))
+            .withColumn("ref",regexp_replace(decode(unbase64($"ref"),"UTF-8"),"\t",""))
+            //withColumn("ua",decode(unbase64($"ua"),"UTF-8")).
+                //            .withColumn("cookie",regexp_replace(decode(unbase64($"cookie"),"UTF-8"),"\\p{C}","?"))
+            .withColumn("ts",from_unixtime($"ts"))
             .as[SadaRecord]
+        //            .filter{
+        //            rec =>
+        //                hosts.exists(l => l.split(" +").forall(ele => rec.url.contains(ele) || rec.ref.contains(ele)))
+        //
 
-    //
-//        val saveTbl = srcData.as("t1").join(urls.as("t2"),instrCol($"t1.url",$"t1.ref",$"t2.cookie", $"t2.url",$"t2.ref",$"t2.cookie"), "leftsemi")
-        val saveTbl = srcData.as("t1").join(urls.as("t2"),instrCol($"t1.url",$"t1.ref",$"t2.url"), "leftsemi")
+        val filterCol = udf{(url:String,ref:String) =>
+            hosts.exists(url.contains(_)) && hosts.exists(ref.contains(_))
+        }
+        //
+        //        val saveTbl = srcData.as("t1").join(urls.as("t2"),instrCol($"t1.url",$"t1.ref",$"t2.cookie", $"t2.url",$"t2.ref",$"t2.cookie"), "leftsemi")
+        val saveTbl = srcData.as("t1").where(filterCol($"url",$"ref"))
+            .join(urls.as("t2"),instrCol($"t1.url",$"t1.ref",$"t2.url",$"t2.ref"), "leftsemi")
+            .withColumn("ref",base64(encode($"ref","utf-8")))
 
-        saveTbl.coalesce(1000).write.format("com.databricks.spark.csv").
-          option("delimiter", varsMap("delm"))
-        .save(configMap("scrapePath"))
+        saveTbl.coalesce(10000).write.format("com.databricks.spark.csv").
+            option("delimiter", varsMap("delm")).
+            save(configMap("scrapePath"))
     }
-
+    @deprecated
+    def scrapeScourceAcc_(configMap:Map[String,String], enc:Enc): Unit = {
+        //println(s"source files: ${adcookiePath} ${newclickPath} ${postPath}")
+        val sadaRecordArr = Array("srcip", "ad", "ts", "url", "ref", "ua", "dstip", "cookie", "srcPort")
+        //    val decode64 = Base64.getDecoder
+        val encryptString = udf { (url: String) =>
+            enc.encrypt(url)
+        }
+        val data = sc.textFile(configMap("sourcePath"))
+        //    val data = sc.textFile("%s,%s,%s".format(adcookiePath,newclickPath,postPath))
+        val urlsRDD = sc.textFile(configMap("urlPath")).map(l => enc.decrypt(l)).filter(_.trim != "").collect()
+        val saveTable = data.filter{
+            l =>
+                val arr = l.split("\t")
+                val url = arr(3)
+                val ref:String = new String(Base64.decodeBase64(arr(4)),"utf-8")
+                urlsRDD.exists(l => l.split(" +").forall(ele => url.contains(ele) || ref.contains(ele)))
+        }
+        saveTable.saveAsTextFile(configMap("scrapePath"))
+    }
     // filter data based ts col -- unxi epoch timestamp
     //case class Record(srcip:String, ad:String, ts:Long, url:String, ref:String, desip:String, cookie:String, src_port: String, tslag:Long);
     def processAcc(configMap:Map[String,String],enc: Enc): Unit ={
@@ -370,19 +404,18 @@ object Estate {
         println("no config file find use default settings")
       baseCFG
     }
-    cfg.foreach(pair => println(pair._1+" : "+pair._2))
 
-    val matchMode = if (mode != "none") mode else cfg.getOrElse("matchMode","1")
-
-    val saveMatchPath = Map(
+      val matchMode = if (mode != "none") mode else cfg.getOrElse("matchMode","1")
+      val saveMatchPath = Map(
       "matchMode" -> matchMode,
       "matchPortalPath" -> "%s_%s".format(matchPortalPath , matchMode),
       "dropHistoryPath" -> "%s_%s".format(dropHistoryPath,matchMode),
       "kvPath" -> "%s_%s".format(kvPath,matchMode),
       "saveHistoryPath" -> "%s_%s".format(saveHistoryPath,matchMode)
-    )
+      )
+      cfg.foreach(pair => println(pair._1+" : "+pair._2))
 
-    cfg ++ saveMatchPath
+      cfg ++ saveMatchPath
 
 //    // history file path
 //    val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
@@ -418,15 +451,18 @@ object Estate {
     }
     def run_scrape_from_acc(prjName:String, method:String, dateStr:String,tagName:String,enc: Enc): Unit ={
         val cfgs = getConfig(prjName,method,dateStr)
-        scrapeScourceAcc(cfgs,enc)
-        if (method == "pv"){
+        if (method.endsWith("_deprecated"))
+            scrapeScourceAcc_(cfgs,enc)
+        else scrapeScourceAcc(cfgs,enc)
+        // get method first part
+        val mtd = method.split("_")(0)
+        if (mtd == "pv"){
             processPv(cfgs,enc)
-        }else if(method == "acc"){
+        }else if(mtd == "acc"){
             processAcc(cfgs,enc)
         }else{
             throw new Exception("method not allowed")
         }
-        processAcc(cfgs,enc)
 
         val path = matchPortal(cfgs)
         if (path != "")
@@ -506,6 +542,7 @@ object Estate {
     (cmd,prjName,method,dateStr) match {
       case ("test_conf",prj,mth,ds) => getConfig(prj,mth,ds)
       case ("change_tag",arg1,arg2,arg3) => change_tag(arg1,arg2,arg3,args.lift(4).getOrElse(""))
+      case("run_scrape_from_acc",arg1,arg2,arg3) => run_scrape_from_acc(arg1,arg2,arg3, args.lift(4).getOrElse(""), enc)
       case("run_scrape_from_acc",arg1,arg2,arg3) => run_scrape_from_acc(arg1,arg2,arg3, args.lift(4).getOrElse(""), enc)
       case("run_scrape_from_pv",arg1,arg2,arg3) => run_scrape_from_pv(arg1,arg2,arg3,args.lift(4).getOrElse(""),enc)
       case("run_process",arg1,"pv",arg3) => run_process_pv(arg1,"pv",arg3,args.lift(4).getOrElse(""),enc)

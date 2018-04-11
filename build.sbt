@@ -12,7 +12,7 @@ libraryDependencies ++= Seq(
 )
 
 // https://mvnrepository.com/artifact/org.apache.commons/commons-io
-libraryDependencies += "org.apache.commons" % "commons-io" % "1.3.2"
+libraryDependencies += "org.apache.commons" % "commons-io" % "1.3.2" % Provided
 
 
 unmanagedBase := baseDirectory.value / "lib"
