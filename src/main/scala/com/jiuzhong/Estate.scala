@@ -36,7 +36,7 @@ object Estate {
     val sadaRecordArr = Array("srcip", "ad", "ts", "url", "ref", "ua", "dstip", "cookie", "srcPort","tbd","datelabel","timestamp","source")
     def varsMap = Map(("delm","\t"),("underscore","_"),("ad","ad"),("total","_total"))
 
-    // str1 is outer table filed and str2 is inner table field
+    // str1 is outer table filed and str2 is inner table field -- run as the beginning of the job
     private val inStrUDF = udf{(str1:String,str2:String) =>
         if (str2 == null ) true else if(str1 == null) false else str2.split(" +").forall(str1.contains(_))
     }

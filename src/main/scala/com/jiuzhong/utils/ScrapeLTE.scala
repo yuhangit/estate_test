@@ -37,9 +37,9 @@ class ScrapeLTE(spark: SparkSession) {
         val data  = spark.sql("""select t1.* from source_data t1
                              where exists
                                 (select 1 from urls t2
-                                where inStr(t1.url,t2.url)
-                                    and inStr(t1.cookie, t2.cookie)
-                                    and inStr(t1.referer,t2.ref)
+                                where inString(t1.url,t2.url)
+                                    and inString(t1.cookie, t2.cookie)
+                                    and inString(t1.referer,t2.ref)
                                 )""")
         //        val cnt = (data.count()/10000).toInt
         writeData(data,configMap("scrapePath") )
