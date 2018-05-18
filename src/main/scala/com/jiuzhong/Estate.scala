@@ -2,9 +2,10 @@ package com.jiuzhong
 
 import java.net.URL
 import java.text.SimpleDateFormat
+
+import com.jiuzhong.scraper.ScrapeLTE
 import com.jiuzhong.utils.getConfig
-import com.jiuzhong.utils.ScrapeLTE
-import com.jiuzhong.utils.{SadaRecord,PVUrl,ADUAURL,URLRecord}
+import com.jiuzhong.utils.{ADUAURL, PVUrl, SadaRecord, URLRecord}
 import com.jiuzhong.utils.utils.writeData
 import org.apache.commons.codec.binary.Base64
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -26,8 +27,8 @@ object Estate {
     conf.registerKryoClasses(Array(classOf[Enc],classOf[SadaRecord],classOf[PVUrl],classOf[ADUAURL]))
     val spark = SparkSession.builder().enableHiveSupport().appName("OH!!").config(conf).getOrCreate()
     val sc = spark.sparkContext
-    val todayStr = new SimpleDateFormat("yyyyMMdd").format(new java.util.Date())
-    val timeStr = new SimpleDateFormat("HHmmss").format(new java.util.Date())
+    val  todayStr: String = new SimpleDateFormat("yyyyMMdd").format(new java.util.Date())
+    val timeStr: String = new SimpleDateFormat("HHmmss").format(new java.util.Date())
 
     val fs = FileSystem.get(sc.hadoopConfiguration)
 
@@ -594,13 +595,24 @@ object Estate {
 
     def scrape_lte(prjName:String, method:String, dateStr:String, tagName:String, enc: Enc): Unit = {
         val cfgs = getConfig(spark,prjName,method,dateStr)
-        val lte = new ScrapeLTE(spark)
-        lte.scrape(cfgs,dateStr,enc)
+        val lte = new ScrapeLTE(spark,cfgs)
+        lte.scrape(dateStr,enc)
+        lte.process(enc)
+        lte.dropHistory()
+        lte.kv(tagName)
     }
     def process_lte(prjName:String, method:String, dateStr:String, tagName:String, enc: Enc): Unit = {
         val cfgs = getConfig(spark,prjName,method,dateStr)
-        val lte = new ScrapeLTE(spark)
-        lte.process(cfgs,enc)
+        val lte = new ScrapeLTE(spark,cfgs)
+        deleteGolbalFile(cfgs("processPath"))
+        deleteGolbalFile(cfgs("matchPortalPath"))
+        deleteGolbalFile(cfgs("dropHistoryPath"))
+        deleteGolbalFile(cfgs("kvPath"))
+        deleteGolbalFile(cfgs("saveHistoryPath"))
+
+        lte.process(enc)
+        lte.dropHistory()
+        lte.kv(tagName)
     }
 
     def scrape_cdpi(prjName:String, method:String, dateStr:String, tagName:String, enc: Enc): Unit = {

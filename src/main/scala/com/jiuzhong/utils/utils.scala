@@ -1,21 +1,30 @@
 package com.jiuzhong.utils
 
+import java.text.SimpleDateFormat
+
 import com.jiuzhong.Estate.fs
 import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.functions.regexp_replace
 
-object utils {
-     def deleteGolbalFile(fileName:String): Unit ={
+object utils extends java.io.Serializable{
+    val  todayStr: String = new SimpleDateFormat("yyyyMMdd").format(new java.util.Date())
+    val timeStr: String = new SimpleDateFormat("HHmmss").format(new java.util.Date())
+
+    def deleteGolbalFile(fileName:String): Unit ={
         val path = fileName + "*"
         for (path <- fs.globStatus(new Path(path))){
             println(s"hadoop  file path: ${path.getPath} already exsits, deleting...")
             fs.delete(path.getPath,true)
         }
-     }
+    }
 
     def  writeData[T](DF:Dataset[T],path:String, num:Int=1000): Unit ={
-        DF.coalesce(num).write.format("csv").option("delimiter","\t").save(path)
+        DF.coalesce(num).write.format("csv").option("delimiter","\t").option("ignoreTrailingSpace",false).save(path)
+    }
+
+    def readData(spark:SparkSession,path:String): DataFrame = {
+        spark.read.option("delimiter","\t").csv(path)
     }
 
     def matchPortal(spark:SparkSession, configMap:Map[String,String]):Unit= {
@@ -111,7 +120,5 @@ object utils {
 
     }
 
-    def copyToPublic(srcPath:String, destPath:String): Unit ={
 
-    }
 }

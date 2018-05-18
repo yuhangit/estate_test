@@ -1,4 +1,6 @@
 package com.jiuzhong
+
+import com.jiuzhong.utils.utils.todayStr
 import org.apache.hadoop.fs.{FileSystem, Path}
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions.udf
@@ -47,6 +49,7 @@ package object utils {
         val historyPath = s"${privateBasePath}/${prjName}_final_history/*"
         val saveHistoryPath = s"${privateBasePath}/${prjName}_final_history/${method}_${dateStrModified}"
         val clientID = prjName
+
         // default configuration return
         val baseCFG = Map(
             "sourcePath" -> sourcePath,
@@ -55,7 +58,8 @@ package object utils {
             "scrapePath" -> scrapePath,
             "processPath" -> processPath,
             "historyPath" -> historyPath,
-            "clientID" -> clientID
+            "clientID" -> clientID,
+            "todayStr" -> todayStr
         )
         val configBasePath = s"${privateBasePath}/config"
         val allCfgPath = s"${configBasePath}/all.cfg"
