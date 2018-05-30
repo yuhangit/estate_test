@@ -4,20 +4,19 @@ import com.jiuzhong.Enc
 import com.jiuzhong.utils.URLRecord
 import com.jiuzhong.utils.ColumnAdd
 import com.jiuzhong.utils.utils.{deleteGolbalFile, readData, writeData}
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.{size, udf}
 
-class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.io.Serializable {
-    import spark.implicits._
-    val statArr = Array("msisdn","tag","counts","id")
-    val processArr = Array("start_time","end_time","imsi","msisdn","apn","tai","ecgi","rat_type","user_ip","server_ip","user_port",
-        "server_port","ip_protocol","s_gw_ip", "p_gw_ip","up_bytes","down_bytes","up_packets","down_packet","protocol_category",
-        "application","sub_appliction","egn_sub_protocol","url","user_agent", "referer","cookie","imsisv","dt","hour")
-    private val sc = spark.sparkContext
+class ScrapeCDPI(spark:SparkSession,configMap:Map[String,String]) {
     val todayStr = configMap("todayStr")
-
-    def scrape(dateStr:String,enc:Enc): Unit = {
-
+    val statArr = Array("mdn","tag","counts","id")
+    val userUrlArr = Array("imsi","mdn","meid","nai","destinationip","destinationport","starttime","endtime","download_bytes","upload_bytes",
+        "destinationurl","protocolid","service_option","useragent","referer","bsid","host","datevalue","hour_zone","site","refer_site",
+        "refer_host","userkw_single","cookie","source_ip","source_port","filename","datelabel","loadstamp")
+    val cdpiArr = Array("imsi","mdn","destinationurl","useragent","referer","cookie","datelabel","loadstamp","source")
+    val sc = spark.sparkContext
+    import spark.implicits._
+    def scrape(dateStr:String,enc:Enc):Unit ={
         val urlsRDD= sc.textFile(configMap("urlPath")).map(l => enc.decrypt(l)).filter(_.trim != "")
         urlsRDD.saveAsTextFile(configMap("urlPath")+"asda")
         val urls = spark.read.format("json").load(configMap("urlPath") +"asda").as[URLRecord].cache()
@@ -25,7 +24,14 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
         urls.count()
         deleteGolbalFile(configMap("urlPath") +"asda")
         val hosts = urls.map(_.host).distinct().collect()
-        val stmt = s"select * from db_lte.sada_lte_ufdr where dt rlike '${dateStr}'"
+        val stmt =
+            s"""
+               |select imsi,mdn,destinationurl,useragent,referer,cookie,datelabel,loadstamp, "userurl" as source
+               |from db_cdpi.sada_cdpi_userurl where datelabel rlike '${dateStr}'
+               |union all
+               |select imsi,mdn,destinationurl, null ,null , null, datelabel, loadstamp, "userflow" as source
+               |from db_cdpi.sada_cdpi_userflow where datelabel rlike '${dateStr}'
+             """.stripMargin
 
         val srcData = spark.sql(stmt)
 
@@ -36,86 +42,62 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
         }
         //
         //        val saveTbl = srcData.as("t1").join(urls.as("t2"),instrCol($"t1.url",$"t1.ref",$"t2.cookie", $"t2.url",$"t2.ref",$"t2.cookie"), "leftsemi")
-        srcData.where(filterCol($"url"))
+        srcData.where(filterCol($"destinationurl"))
             .createTempView("source_data")
 
         val data  = spark.sql("""select t1.* from source_data t1
                              where exists
                                 (select 1 from urls t2
-                                where inString(t1.url,t2.url)
+                                where inString(t1.destinationurl,t2.url)
                                     and inString(t1.cookie, t2.cookie)
                                     and inString(t1.referer,t2.ref)
                                 )""")
         //        val cnt = (data.count()/10000).toInt
         writeData(data,configMap("scrapePath") )
     }
-
-    def process(enc: Enc): Unit ={
-        val process = spark.read.format("csv").option("delimiter","\t").load(configMap("scrapePath")).toDF(processArr:_*)
+    def process(enc:Enc): Unit ={
+        val process = spark.read.format("csv").option("delimiter","\t").load(configMap("scrapePath")).toDF(cdpiArr:_*)
         process.createTempView("process")
 
         val tags = sc.textFile(configMap("tagPath")).map(l => enc.decrypt(l)).filter(_.trim() != "").map( l => (l.split("\\s+")(0),l.split("\\s+")(1))).toDF("tag","appid")
         tags.createTempView("tags")
         val lte_process_count = configMap("lte_process_count")
-        val res = spark.sql("""select msisdn,collect_list(tags.tag) as tag, collect_set(tags.tag) as counts,
-                               row_number() over (order by msisdn) as id
-                        from  process inner join tags on instr(url,appid) > 0
-                        group by msisdn
+        val res = spark.sql("""select mdn,collect_list(tags.tag) as tag, collect_set(tags.tag) as counts,
+                               row_number() over (order by mdn) as id
+                        from  process inner join tags on instr(destinationurl,appid) > 0
+                        group by mdn
                          """)
             .withColumn("tag", $"tag" mkString ",").withColumn("counts", size($"counts"))
             .where(s"counts >= $lte_process_count")
-        res.createTempView("lte_res")
-        val verifyPhonePath = "/user/g_tel_hlwb_data/public/hlwb_data1/phone_set/"
-        val verifyPhone = spark.read.textFile(verifyPhonePath)
-        verifyPhone.createTempView("filter_phone")
-        val result_verify = spark.sql(
-            """
-              |select lte_res.*
-              |from lte_res
-              |where exists (
-              |     select 1
-              |     from filter_phone
-              |     where filter_phone.value = lte_res.msisdn
-              |)
-            """.stripMargin)
 
-        writeData(result_verify,configMap("processPath"),10)
+
+        writeData(res,configMap("processPath"),10)
     }
 
     def dropHistory(): Unit ={
         val dropHis = spark.read.format("csv").option("delimiter","\t").load(configMap("processPath")).toDF(statArr:_*)
-        var filter:DataFrame = null
-        try{
-            val history = readData(spark, configMap("historyPath")).toDF("phone")
-            dropHis.createTempView("dropHis")
-            history.createTempView("history")
+        val history = readData(spark, configMap("historyPath")).toDF("phone")
+        dropHis.createTempView("dropHis")
+        history.createTempView("history")
 
-            filter = spark.sql(
-                """
-                  |select dropHis.*
-                  |from dropHis
-                  |where not exists(
-                  |  select 1
-                  |  from history
-                  |  where drophis.msisdn = history.phone
-                  |)
-                """.stripMargin
-            )
-        }
-        catch {
-            case e: java.lang.IllegalArgumentException =>
-                filter = dropHis;
-            case e:Throwable => throw e;
-        }
-
+        val filter = spark.sql(
+            """
+              |select dropHis.*
+              |from dropHis
+              |where not exists(
+              |  select 1
+              |  from history
+              |  where drophis.mdn = history.phone
+              |)
+            """.stripMargin
+        )
         writeData(filter,configMap("dropHistoryPath"))
     }
 
-    def kv(key:String,method:String, dateStr:String):Unit= {
+    def kv(key:String):Unit= {
         val clientID = configMap("clientID")
         val requirementID = key.split("_")(0)
         val serialID = key.split("_")(1)
-        val tagSuffix = "_"+ method+"_"+dateStr
         val inDF = spark.read.format("csv").option("delimiter","\t").option("inferschema",true)
             .load(configMap("dropHistoryPath")).toDF(statArr:_*)
 
@@ -124,7 +106,7 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
             s"""
                |select concat(concat_ws('_','$clientID','$requirementID','$todayStr','$serialID',
                |                     row_number() over (order by id) -1),'\t') as key,
-               |       concat_ws('\t',concat(format_string('%04d',id) ,'$tagSuffix') , msisdn) as value
+               |       concat_ws('\t',format_string('%04d',id), mdn) as value
                |
               |from inDF
             """.stripMargin)
@@ -144,7 +126,7 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
                |    select concat_ws('_','$clientID','$requirementID','$todayStr','$serialID','total') , count(*)
                |    from kv)
             """.stripMargin)
-        val historyDF = inDF.select("msisdn")
+        val historyDF = inDF.select("mdn")
         writeData(historyDF,configMap("saveHistoryPath"),1)
         kvTbl.coalesce(1).write.format("csv").option("delimiter","\u0001")
             .option("ignoreTrailingSpace",false).save(configMap("kvPath"))

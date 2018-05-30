@@ -3,7 +3,7 @@ package com.jiuzhong
 import java.net.URL
 import java.text.SimpleDateFormat
 
-import com.jiuzhong.scraper.ScrapeLTE
+import com.jiuzhong.scraper.{ScrapeCDPI, ScrapeLTE}
 import com.jiuzhong.utils.getConfig
 import com.jiuzhong.utils.{ADUAURL, PVUrl, SadaRecord, URLRecord}
 import com.jiuzhong.utils.utils.writeData
@@ -599,7 +599,7 @@ object Estate {
         lte.scrape(dateStr,enc)
         lte.process(enc)
         lte.dropHistory()
-        lte.kv(tagName)
+        lte.kv(tagName,method,dateStr)
     }
     def process_lte(prjName:String, method:String, dateStr:String, tagName:String, enc: Enc): Unit = {
         val cfgs = getConfig(spark,prjName,method,dateStr)
@@ -612,12 +612,29 @@ object Estate {
 
         lte.process(enc)
         lte.dropHistory()
-        lte.kv(tagName)
+        lte.kv(tagName,method,dateStr)
+    }
+    def process_cdpi(prjName:String, method:String, dateStr:String, tagName:String, enc: Enc): Unit = {
+        val cfgs = getConfig(spark,prjName,method,dateStr)
+        val cdpi = new ScrapeCDPI(spark,cfgs)
+        deleteGolbalFile(cfgs("processPath"))
+        deleteGolbalFile(cfgs("matchPortalPath"))
+        deleteGolbalFile(cfgs("dropHistoryPath"))
+        deleteGolbalFile(cfgs("kvPath"))
+        deleteGolbalFile(cfgs("saveHistoryPath"))
+
+        cdpi.process(enc)
+        cdpi.dropHistory()
+        cdpi.kv(tagName)
     }
 
     def scrape_cdpi(prjName:String, method:String, dateStr:String, tagName:String, enc: Enc): Unit = {
-        val cfg = getConfig(spark,prjName,method,dateStr)
-        scrapeCDPI(cfg,dateStr,enc)
+        val cfgs = getConfig(spark,prjName,method,dateStr)
+        val cdpi = new ScrapeCDPI(spark,cfgs)
+        cdpi.scrape(dateStr,enc)
+        cdpi.process(enc)
+        cdpi.dropHistory()
+        cdpi.kv(tagName)
     }
 
     // arg 0 : project name must supply.
@@ -640,6 +657,7 @@ object Estate {
     //      case("run_process",arg1,"acc",arg3) =>run_process_acc(arg1,"acc",arg3,args.lift(4).getOrElse(""),enc)
             case("scrape_lte",arg1,arg2,arg3) => scrape_lte(arg1,arg2,arg3,args.lift(4).getOrElse(""),enc)
             case("scrape_cdpi",arg1,arg2,arg3)=>scrape_cdpi(arg1,arg2,arg3,args.lift(4).getOrElse(""),enc)
+            case("process_cdpi",arg1,arg2,arg3)=>process_cdpi(arg1,arg2,arg3,args.lift(4).getOrElse(""),enc)
             case("process_lte",arg1,arg2,arg3)=>process_lte(arg1,arg2,arg3,args.lift(4).getOrElse(""),enc)
         }
     }

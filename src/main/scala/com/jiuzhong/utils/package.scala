@@ -65,15 +65,15 @@ package object utils {
         val allCfgPath = s"${configBasePath}/all.cfg"
         val cfgPath = s"${configBasePath}/${prjName}_${method}.cfg"
         val cfg = if (fs.exists(new Path(cfgPath))) {
-            val cfg = sc.textFile(cfgPath).filter(!_.startsWith("#")).map {
+            val cfg = sc.textFile(cfgPath).filter(!_.startsWith("#")).filter(_.trim() != "").map {
                 l =>
                     var arr = l.split(" +")
                     arr(0) -> arr(1)
             }.collect().toMap[String,String]
             baseCFG ++ cfg
-        }else if( fs.exists(new Path(allCfgPath)) && sc.textFile(allCfgPath).filter(_.contains(s"${prjName}_${method}")).count() == 1) {
+        }else if( fs.exists(new Path(allCfgPath)) && sc.textFile(allCfgPath).filter(_.contains(s"${prjName}_$method")).count() == 1) {
             val cfgPath = sc.textFile(allCfgPath).filter(!_.startsWith("#"))
-                .filter(   _.contains(s"${prjName}_${method}")).take(1)(0).split(" +")(1)
+                .filter(   _.contains(s"${prjName}_$method")).take(1)(0).split(" +")(1)
 
             val cfg = sc.textFile(configBasePath+"/"+ cfgPath).map{
                 l =>
