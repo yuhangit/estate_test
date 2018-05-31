@@ -21,6 +21,7 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
         val urlsRDD= sc.textFile(configMap("urlPath")).map(l => enc.decrypt(l)).filter(_.trim != "")
         urlsRDD.saveAsTextFile(configMap("urlPath")+"asda")
         val urls = spark.read.format("json").load(configMap("urlPath") +"asda").as[URLRecord].cache()
+//        urls.show(50,false)
         urls.createTempView("urls")
         urls.count()
         deleteGolbalFile(configMap("urlPath") +"asda")
@@ -54,17 +55,27 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
         val process = spark.read.format("csv").option("delimiter","\t").load(configMap("scrapePath")).toDF(processArr:_*)
         process.createTempView("process")
 
-        val tags = sc.textFile(configMap("tagPath")).map(l => enc.decrypt(l)).filter(_.trim() != "").map( l => (l.split("\\s+")(0),l.split("\\s+")(1))).toDF("tag","appid")
+        val tags = sc.textFile(configMap("tagPath")).map(l => enc.decrypt(l)).filter(_.trim() != "").map{
+            l =>
+                var arr = l.split("\\s+")
+                (arr(0),arr(1),arr(2))
+        }.toDF("tag","appid","id")
         tags.createTempView("tags")
         val lte_process_count = configMap("lte_process_count")
         val res = spark.sql("""select msisdn,collect_list(tags.tag) as tag, collect_set(tags.tag) as counts,
-                               row_number() over (order by msisdn) as id
+                               collect_set(tags.id) as id
                         from  process inner join tags on instr(url,appid) > 0
                         group by msisdn
                          """)
             .withColumn("tag", $"tag" mkString ",").withColumn("counts", size($"counts"))
+            .withColumn("id", $"id" mkString "_")
             .where(s"counts >= $lte_process_count")
         res.createTempView("lte_res")
+
+        // add group contain process
+        if (configMap.getOrElse("lte_group_process", "0") == "1"){
+        }
+
         val verifyPhonePath = "/user/g_tel_hlwb_data/public/hlwb_data1/phone_set/"
         val verifyPhone = spark.read.textFile(verifyPhonePath)
         verifyPhone.createTempView("filter_phone")
@@ -111,11 +122,12 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
         writeData(filter,configMap("dropHistoryPath"))
     }
 
-    def kv(key:String,method:String, dateStr:String):Unit= {
+    def kv(key:String):Unit= {
         val clientID = configMap("clientID")
         val requirementID = key.split("_")(0)
         val serialID = key.split("_")(1)
-        val tagSuffix = "_"+ method+"_"+dateStr
+        val keySuff = key.split("_").drop(2).mkString("_")
+
         val inDF = spark.read.format("csv").option("delimiter","\t").option("inferschema",true)
             .load(configMap("dropHistoryPath")).toDF(statArr:_*)
 
@@ -124,7 +136,7 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
             s"""
                |select concat(concat_ws('_','$clientID','$requirementID','$todayStr','$serialID',
                |                     row_number() over (order by id) -1),'\t') as key,
-               |       concat_ws('\t',concat(format_string('%04d',id) ,'$tagSuffix') , msisdn) as value
+               |       concat_ws('\t',concat(id ,'$keySuff') , msisdn) as value
                |
               |from inDF
             """.stripMargin)

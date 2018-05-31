@@ -443,6 +443,7 @@ object Estate {
         val clientID = configMap("clientID")
         val requirementID = key.split("_")(0)
         val serialID = key.split("_")(1)
+        val tagSuf = key.split("_").drop(2).mkString("_")
         val inDF = spark.read.format("csv").option("delimiter","\t")
             .load(configMap("dropHistoryPath")).toDF("mobile","tag")
 
@@ -599,7 +600,7 @@ object Estate {
         lte.scrape(dateStr,enc)
         lte.process(enc)
         lte.dropHistory()
-        lte.kv(tagName,method,dateStr)
+        lte.kv(tagName)
     }
     def process_lte(prjName:String, method:String, dateStr:String, tagName:String, enc: Enc): Unit = {
         val cfgs = getConfig(spark,prjName,method,dateStr)
@@ -612,7 +613,7 @@ object Estate {
 
         lte.process(enc)
         lte.dropHistory()
-        lte.kv(tagName,method,dateStr)
+        lte.kv(tagName)
     }
     def process_cdpi(prjName:String, method:String, dateStr:String, tagName:String, enc: Enc): Unit = {
         val cfgs = getConfig(spark,prjName,method,dateStr)
