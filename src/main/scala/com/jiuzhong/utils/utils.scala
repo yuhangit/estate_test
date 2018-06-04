@@ -20,11 +20,11 @@ object utils extends java.io.Serializable{
     }
 
     def  writeData[T](DF:Dataset[T],path:String, num:Int=1000): Unit ={
-        DF.coalesce(num).write.format("csv").option("delimiter","\t").option("ignoreTrailingSpace",false).save(path)
+        DF.coalesce(num).write.format("csv").option("delimiter","\t").option("header","true").option("ignoreTrailingSpace",false).save(path)
     }
 
     def readData(spark:SparkSession,path:String): DataFrame = {
-        spark.read.option("delimiter","\t").csv(path)
+        spark.read.option("header","true").option("delimiter","\t").option("inferSchema","true").csv(path)
     }
 
     def matchPortal(spark:SparkSession, configMap:Map[String,String]):Unit= {

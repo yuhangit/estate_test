@@ -52,7 +52,7 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
     }
 
     def process(enc: Enc): Unit ={
-        val process = spark.read.format("csv").option("delimiter","\t").load(configMap("scrapePath")).toDF(processArr:_*)
+        val process = readData(spark,configMap("scrapePath")).toDF(processArr:_*)
         process.createTempView("process")
 
         val tags = sc.textFile(configMap("tagPath")).map(l => enc.decrypt(l)).filter(_.trim() != "").map{
@@ -94,7 +94,7 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
     }
 
     def dropHistory(): Unit ={
-        val dropHis = spark.read.format("csv").option("delimiter","\t").load(configMap("processPath")).toDF(statArr:_*)
+        val dropHis = readData(spark,configMap("processPath")).toDF(statArr:_*)
         var filter:DataFrame = null
         try{
             val history = readData(spark, configMap("historyPath")).toDF("phone")
@@ -128,15 +128,14 @@ class ScrapeLTE(spark: SparkSession,configMap:Map[String,String]) extends java.i
         val serialID = key.split("_")(1)
         val keySuff = key.split("_").drop(2).mkString("_")
 
-        val inDF = spark.read.format("csv").option("delimiter","\t").option("inferschema",true)
-            .load(configMap("dropHistoryPath")).toDF(statArr:_*)
+        val inDF = readData(spark,configMap("dropHistoryPath")).toDF(statArr:_*)
 
         inDF.createTempView("inDF")
         val kv = spark.sql(
             s"""
                |select concat(concat_ws('_','$clientID','$requirementID','$todayStr','$serialID',
                |                     row_number() over (order by id) -1),'\t') as key,
-               |       concat_ws('\t',concat(id ,'$keySuff') , msisdn) as value
+               |       concat_ws('\t',concat_ws("_", row_number() over (order by id) -1),id ,'$keySuff') , msisdn) as value
                |
               |from inDF
             """.stripMargin)
